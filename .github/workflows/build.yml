@@ -11,6 +11,13 @@ env:
   # ↓ 改版本号时同步修改这里和 installer/setup.iss 中的 MyAppVersion
   APP_VERSION: '2.1.0'
 
+# 显式声明工作流权限。
+# 默认 GITHUB_TOKEN 只有只读权限，会导致 action-gh-release 报
+# 「Resource not accessible by integration」(403) 无法创建 Release。
+# 这里显式授予 contents: write（最小必要权限，不需要去改仓库的全局设置）。
+permissions:
+  contents: write
+
 jobs:
   build-x64:
     runs-on: windows-latest
@@ -113,3 +120,5 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          # 重复推送同一个 tag 时覆盖已有附件，而不是报错
+          overwrite_files: true
