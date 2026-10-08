@@ -21,6 +21,15 @@ installer/Output/
 *.msi
 *.msix
 
+## Android 产物
+*.apk
+*.aab
+*.keystore
+*.jks
+# .NET Android 生成的中间目录
+**/Resources/values/*.generated.cs
+**/Resource.designer.cs
+
 ## 本地配置与日志（可能含账号信息，切勿提交）
 config.json
 campus_login_config.json

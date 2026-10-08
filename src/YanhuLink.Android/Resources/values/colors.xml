@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  配色沿用 Windows 版「砚湖」主题：
+  主色是砚湖的水色青蓝，强调色是水波高光。
+-->
+<resources>
+    <color name="lake_primary">#FF1B6E8C</color>       <!-- 砚湖主色 -->
+    <color name="lake_primary_dark">#FF124B60</color>
+    <color name="lake_accent">#FF2E9CB8</color>        <!-- 水波高光 -->
+    <color name="lake_bg">#FFF5F8FA</color>            <!-- 浅灰蓝背景 -->
+    <color name="surface">#FFFFFFFF</color>
+    <color name="text_primary">#FF1A2226</color>
+    <color name="text_secondary">#FF5B6B73</color>
+    <color name="divider">#FFE2E9ED</color>
+    <color name="ok_green">#FF2E9E6B</color>
+    <color name="warn_amber">#FFC98A2B</color>
+    <color name="err_red">#FFD9534F</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

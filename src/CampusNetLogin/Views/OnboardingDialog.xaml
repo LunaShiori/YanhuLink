@@ -26,6 +26,7 @@
             <Border x:Name="Dot2" Width="24" Height="4" CornerRadius="2" />
             <Border x:Name="Dot3" Width="24" Height="4" CornerRadius="2" />
             <Border x:Name="Dot4" Width="24" Height="4" CornerRadius="2" />
+            <Border x:Name="Dot5" Width="24" Height="4" CornerRadius="2" />
         </StackPanel>
 
         <!-- ================= 步骤内容 ================= -->
@@ -191,7 +192,67 @@
                 </Border>
             </StackPanel>
 
-            <!-- ========== 第 4 步：完成 ========== -->
+            <!-- ========== 第 4 步：权限（静默提权） ========== -->
+            <StackPanel x:Name="StepPermission" Spacing="14" Visibility="Collapsed">
+                <StackPanel Spacing="4">
+                    <TextBlock Text="让它在后台安静工作" Style="{StaticResource SubtitleStyle}" />
+                    <TextBlock Style="{StaticResource CaptionStyle}"
+                               TextWrapping="Wrap"
+                               Text="自动切换网络需要一次管理员授权。现在授权，以后就再也不会弹窗打扰你。" />
+                </StackPanel>
+
+                <Border Style="{StaticResource CardStyle}" Padding="16,14">
+                    <StackPanel Spacing="10">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <FontIcon Glyph="&#xE72E;" FontSize="16"
+                                      Foreground="{ThemeResource BrandPrimaryBrush}"
+                                      VerticalAlignment="Top" Margin="0,2,0,0" />
+                            <StackPanel Spacing="3">
+                                <TextBlock Text="一次性授权，永久静默" FontWeight="SemiBold"
+                                           FontSize="13.5" />
+                                <TextBlock Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                                           Text="点下面的按钮会弹出一次 Windows 的 UAC 确认框（就是平时装软件时那个「是否允许更改」）。点「是」之后，程序会注册一个最高权限的计划任务，以后所有后台启动都由它完成 —— 不会再有任何弹窗。" />
+                            </StackPanel>
+                        </StackPanel>
+
+                        <Border Style="{StaticResource InsetPanelStyle}">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="为什么需要权限？" FontWeight="SemiBold" FontSize="12.5" />
+                                <TextBlock Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                                           Text="切换网络出口要修改网卡的路由优先级，这是 Windows 要求管理员才能做的操作。不授权也能用自动登录，只是断网时不会自动切到手机热点。" />
+                            </StackPanel>
+                        </Border>
+
+                        <StackPanel x:Name="PermissionStatusPanel" Spacing="8">
+                            <TextBlock x:Name="PermissionStatusText"
+                                       Style="{StaticResource CaptionStyle}" FontWeight="SemiBold"
+                                       TextWrapping="Wrap" />
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <Button x:Name="GrantNowButton" Click="OnGrantElevationNow"
+                                        Padding="14,6"
+                                        Style="{StaticResource AccentButtonStyle}">
+                                    <StackPanel Orientation="Horizontal" Spacing="6">
+                                        <FontIcon Glyph="&#xE72E;" FontSize="13" />
+                                        <TextBlock Text="现在授权" FontSize="12.5" />
+                                    </StackPanel>
+                                </Button>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource InsetPanelStyle}">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <FontIcon Glyph="&#xE946;" FontSize="14"
+                                  Foreground="{ThemeResource StatusOfflineBrush}"
+                                  VerticalAlignment="Top" Margin="0,1,0,0" />
+                        <TextBlock Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                                   Text="不想现在授权也没关系，点「下一步」跳过即可。之后可以随时在「设置 → 权限」里开启。" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- ========== 第 5 步：完成 ========== -->
             <StackPanel x:Name="StepDone" Spacing="16" Visibility="Collapsed">
                 <StackPanel Spacing="10" HorizontalAlignment="Center">
                     <Border Width="56" Height="56" CornerRadius="28"
@@ -207,10 +268,17 @@
                 </StackPanel>
 
                 <Border Style="{StaticResource CardStyle}" Padding="16,12">
-                    <StackPanel Spacing="8">
+                    <StackPanel Spacing="10">
                         <TextBlock Text="接下来可以做什么" FontWeight="SemiBold" FontSize="13" />
                         <TextBlock Style="{StaticResource CaptionStyle}"
-                                   Text="· 在「首页」点「立即登录」马上联网&#x0a;· 在「网络热备」配置手机热点作为应急备用&#x0a;· 在「设置」里调整自动化行为、主题与更新选项" />
+                                   TextWrapping="Wrap"
+                                   Text="· 在「首页」点「立即登录」马上联网&#x0a;· 在「网络热备」添加手机热点作为应急备用&#x0a;· 在「设置」调整自动化行为、主题与更新选项" />
+
+                        <TextBlock Text="小技巧" FontWeight="SemiBold" FontSize="13"
+                                   Margin="0,4,0,0" />
+                        <TextBlock Style="{StaticResource CaptionStyle}"
+                                   TextWrapping="Wrap"
+                                   Text="· 关闭窗口会自动最小化到托盘，程序在后台继续守护&#x0a;· 右键托盘图标可以快速查看状态、一键切网&#x0a;· 打游戏时不用担心：切换网络完全静默，不会弹窗打断你" />
                     </StackPanel>
                 </Border>
             </StackPanel>

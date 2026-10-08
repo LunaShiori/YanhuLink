@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  首次设置向导（一屏到底，滚动查看）。
+
+  与 Windows 版 5 步向导的信息量对齐，但手机屏幕小，
+  采用「单页长滚动 + 分节卡片」而不是分步翻页 ——
+  用户能一眼看到全貌，也方便随时回看。
+-->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/lake_bg"
+    android:fillViewport="true">
+
+  <LinearLayout
+      android:layout_width="match_parent"
+      android:layout_height="wrap_content"
+      android:orientation="vertical"
+      android:padding="20dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:text="欢迎使用砚湖连"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        style="@style/Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="扬州职业技术大学高邮湖校区 · 校园网自动连接"
+        android:textSize="14sp" />
+
+    <!-- 卡片 1：它做什么 -->
+    <LinearLayout
+        style="@style/CardSurface"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="20dp"
+        android:orientation="vertical">
+      <TextView
+          style="@style/SectionTitle"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:text="它做什么？" />
+      <TextView
+          style="@style/Caption"
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="· 连接校园 WiFi 后自动完成上网认证，不用再打开浏览器\n· 后台常驻监听，断线自动重连\n· 账号密码只保存在本机，不上传任何服务器" />
+    </LinearLayout>
+
+    <!-- 卡片 2：需要什么权限 -->
+    <LinearLayout
+        style="@style/CardSurface"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+      <TextView
+          style="@style/SectionTitle"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:text="需要两个权限" />
+
+      <TextView
+          style="@style/Caption"
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="① 位置权限 —— 读取 WiFi 名称\n   Android 10 起 WiFi 名称被归为位置信息，不给权限就只能看到「未知网络」。仅用于判断是否连的是校园网，不定位、不上传。" />
+
+      <TextView
+          style="@style/Caption"
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="② 通知权限 —— 显示运行状态\n   Android 要求后台常驻的程序必须挂一条通知，这是系统强制规定。通知会显示当前认证状态，并且可以直接点「停止」。" />
+    </LinearLayout>
+
+    <!-- 卡片 3：账号 -->
+    <LinearLayout
+        style="@style/CardSurface"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+      <TextView
+          style="@style/SectionTitle"
+          android:layout_width="wrap_content"
+          android:layout_height="wrap_content"
+          android:text="填入学号与密码" />
+
+      <TextView
+          style="@style/Caption"
+          android:layout_width="match_parent"
+          android:layout_height="wrap_content"
+          android:layout_marginTop="10dp"
+          android:text="在下一页填入即可。运营商选错也没关系，程序会自动加对应的账号后缀（如 @cmcc）。" />
+    </LinearLayout>
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnGrantPermissions"
+        style="@style/PrimaryButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="8dp"
+        android:text="授权并开始" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/btnSkip"
+        style="@style/OutlineButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="10dp"
+        android:text="跳过，稍后再说" />
+
+    <TextView
+        style="@style/Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="20dp"
+        android:gravity="center"
+        android:textSize="11sp"
+        android:text="跳过也没关系，随时可以在主界面重新授权。" />
+
+  </LinearLayout>
+</ScrollView>

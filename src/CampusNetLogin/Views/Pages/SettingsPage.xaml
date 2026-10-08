@@ -75,12 +75,14 @@
                                   OnContent="已开启" OffContent="已关闭"
                                   Toggled="OnAutoStartToggled" />
 
+                    <TextBlock x:Name="StartupModeText" Style="{StaticResource CaptionStyle}" />
+
                     <InfoBar x:Name="StartupTaskBar" IsOpen="False" IsClosable="True"
                              Severity="Informational"
-                             Title="建议改用计划任务启动"
-                             Message="当前使用注册表自启，开机时会弹出 UAC 提权提示。改用计划任务可以免除弹窗。">
+                             Title="建议改用最高权限启动"
+                             Message="当前使用注册表自启（普通权限），开机后自动切换网络不会生效。开启静默提权后可免除 UAC 弹窗。">
                         <InfoBar.ActionButton>
-                            <Button Content="改用计划任务" Click="OnRegisterStartupTask"
+                            <Button Content="开启静默提权" Click="OnGrantElevation"
                                     Padding="12,5" />
                         </InfoBar.ActionButton>
                     </InfoBar>
@@ -94,6 +96,31 @@
                                     Padding="12,5" />
                         </InfoBar.ActionButton>
                     </InfoBar>
+                </StackPanel>
+            </Border>
+
+            <!-- ============ 权限（静默提权） ============ -->
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel Spacing="12">
+                    <TextBlock Text="权限" Style="{StaticResource SectionHeaderStyle}" />
+                    <TextBlock Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                               Text="自动切换网络需要管理员权限。开启静默提权后只需授权一次，之后后台运行全程不再出现 UAC 弹窗 —— 打游戏时也不会被打断。" />
+
+                    <TextBlock x:Name="ElevationStatusText" Style="{StaticResource CaptionStyle}"
+                               FontWeight="SemiBold" />
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="GrantElevationButton" Click="OnGrantElevation" Padding="12,5">
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <FontIcon Glyph="&#xE72E;" FontSize="13" />
+                                <TextBlock Text="开启静默提权" FontSize="12.5" />
+                            </StackPanel>
+                        </Button>
+                        <Button x:Name="RevokeElevationButton" Click="OnRevokeElevation"
+                                Padding="12,5" Visibility="Collapsed">
+                            <TextBlock Text="关闭静默提权" FontSize="12.5" />
+                        </Button>
+                    </StackPanel>
                 </StackPanel>
             </Border>
 

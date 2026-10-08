@@ -317,6 +317,93 @@ public sealed class MainViewModel : INotifyPropertyChanged
         set => Set(ref _notifyOnSwitch, value);
     }
 
+    private bool _silentInFullscreen = true;
+    /// <summary>游戏 / 全屏时不打扰：切换网络时抑制可见提示。</summary>
+    public bool FailoverSilentInFullscreen
+    {
+        get => _silentInFullscreen;
+        set => Set(ref _silentInFullscreen, value);
+    }
+
+    private bool _alwaysSilent;
+    /// <summary>切换时完全静默：连托盘气泡都不发。</summary>
+    public bool FailoverAlwaysSilent
+    {
+        get => _alwaysSilent;
+        set => Set(ref _alwaysSilent, value);
+    }
+
+    // ---- 静默提权状态 ----
+
+    private bool _silentElevationGranted;
+    /// <summary>是否已开启静默提权（计划任务已注册）。</summary>
+    public bool SilentElevationGranted
+    {
+        get => _silentElevationGranted;
+        private set
+        {
+            if (Set(ref _silentElevationGranted, value))
+                OnPropertyChanged(nameof(SilentElevationText));
+        }
+    }
+
+    /// <summary>静默提权状态文案。</summary>
+    public string SilentElevationText => SilentElevationGranted
+        ? "已开启 · 后台运行不再出现 UAC 弹窗"
+        : "未开启 · 每次以管理员启动都会弹出 UAC 确认框";
+
+    /// <summary>刷新静默提权状态（在界面激活 / 提权返回后调用）。</summary>
+    public void RefreshElevationState()
+    {
+        SilentElevationGranted = ElevationService.IsSilentElevationGranted();
+        OnPropertyChanged(nameof(IsElevatedNow));
+        OnPropertyChanged(nameof(ElevationSummaryText));
+    }
+
+    /// <summary>当前进程是否为管理员。</summary>
+    public bool IsElevatedNow => ElevationService.IsElevated();
+
+    /// <summary>权限概览文案，用于设置页与热备页。</summary>
+    public string ElevationSummaryText
+    {
+        get
+        {
+            if (SilentElevationGranted && IsElevatedNow)
+                return "静默提权已生效，自动切换可正常工作，且不会弹 UAC";
+            if (SilentElevationGranted)
+                return "静默提权已授权；重启后即可以管理员身份静默运行";
+            if (IsElevatedNow)
+                return "当前是管理员，但未开启静默提权 —— 下次启动仍会弹 UAC 确认框";
+            return "未取得管理员权限，自动切换网络可能不生效";
+        }
+    }
+
+    /// <summary>
+    /// 开启静默提权：弹一次 UAC，授权后注册最高权限计划任务。
+    ///
+    /// 返回 false 表示用户取消了 UAC 或注册失败。
+    /// 注意：成功时当前进程会退出（由提权后的新实例接管）。
+    /// </summary>
+    public bool GrantSilentElevation()
+    {
+        // 先在退出前把当前配置落盘，避免新实例读到旧值
+        try { SaveConfigQuiet(); } catch { /* ignore */ }
+
+        return ElevationService.GrantSilentElevation(() =>
+        {
+            // 释放单实例锁，让提权后的新实例能正常启动
+            try { App.InstanceGuard?.ReleaseForRestart(); } catch { /* ignore */ }
+        });
+    }
+
+    /// <summary>关闭静默提权（删除计划任务）。需管理员权限。</summary>
+    public bool RevokeSilentElevation()
+    {
+        var ok = ElevationService.DeleteSilentTask();
+        RefreshElevationState();
+        return ok;
+    }
+
     // ---- 实时状态 ----
 
     private string _currentNetName = "未知";
@@ -718,6 +805,76 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return UpdateService.OpenInBrowser(target);
     }
 
+    // ------------------------------------------------------------------
+    // 一键更新
+    // ------------------------------------------------------------------
+
+    private double _updateProgress;
+    public double UpdateProgress
+    {
+        get => _updateProgress;
+        private set => Set(ref _updateProgress, value);
+    }
+
+    private bool _isDownloadingUpdate;
+    public bool IsDownloadingUpdate
+    {
+        get => _isDownloadingUpdate;
+        private set => Set(ref _isDownloadingUpdate, value);
+    }
+
+    /// <summary>
+    /// 下载并安装更新。
+    ///
+    /// 返回值语义：
+    ///   · true  —— 已把安装程序 / 过渡脚本拉起，**调用方应立即退出程序**
+    ///   · false —— 失败，界面应引导用户去发布页手动下载
+    ///
+    /// 安装版会静默跑 Inno Setup（带 /NORESTART，不会强制重启电脑）；
+    /// 绿色版会拉起一个过渡脚本，等本进程退出后解压覆盖并重启。
+    /// </summary>
+    public async Task<bool> DownloadAndInstallUpdateAsync(UpdateInfo info)
+    {
+        if (info is null || !info.CanAutoInstall) return false;
+        if (IsDownloadingUpdate) return false;
+
+        IsDownloadingUpdate = true;
+        UpdateProgress = 0;
+        UpdateStatusText = $"正在下载 {info.PackageName}…";
+        _log.Info($"开始下载更新包：{info.PackageName}（{info.LatestVersion}）");
+
+        try
+        {
+            var progress = new Progress<double>(p =>
+            {
+                UpdateProgress = p;
+                UpdateStatusText = $"正在下载… {p * 100:0}%";
+            });
+
+            var ok = await _update.DownloadAndInstallAsync(info, progress)
+                .ConfigureAwait(false);
+
+            if (ok)
+            {
+                UpdateStatusText = "下载完成，正在安装…";
+                _log.Success(info.PackageKind == UpdatePackageKind.Installer
+                    ? "已启动安装程序，程序即将退出以完成更新"
+                    : "已启动更新脚本，程序即将退出以完成更新");
+            }
+            else
+            {
+                UpdateStatusText = "自动更新失败，请前往发布页手动下载";
+                _log.Warn("自动更新失败：可能是下载中断或临时文件无法写入");
+            }
+
+            return ok;
+        }
+        finally
+        {
+            IsDownloadingUpdate = false;
+        }
+    }
+
     /// <summary>是否需要进行启动时的自动检查（默认每 3 天最多一次）。</summary>
     public bool ShouldAutoCheckUpdate()
     {
@@ -759,6 +916,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         RecoveryThreshold = c.FailoverRecoveryThreshold;
         PreemptBackup = c.FailoverPreemptBackup;
         NotifyOnSwitch = c.FailoverNotifyOnSwitch;
+        FailoverSilentInFullscreen = c.FailoverSilentInFullscreen;
+        FailoverAlwaysSilent = c.FailoverAlwaysSilent;
 
         // 速率监测
         SpeedMonitorEnabled = c.SpeedMonitorEnabled;
@@ -814,6 +973,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         c.FailoverRecoveryThreshold = (int)Math.Clamp(RecoveryThreshold, 1, 20);
         c.FailoverPreemptBackup = PreemptBackup;
         c.FailoverNotifyOnSwitch = NotifyOnSwitch;
+        c.FailoverSilentInFullscreen = FailoverSilentInFullscreen;
+        c.FailoverAlwaysSilent = FailoverAlwaysSilent;
         c.FailoverBackups = Backups.Select((b, i) =>
         {
             var m = b.Model.Clone();

@@ -34,7 +34,8 @@ public static class Program
                          lower.Contains("--logout") || lower.Contains("--probe") ||
                          lower.Contains("--net-status") || lower.Contains("--switch-backup") ||
                          lower.Contains("--switch-primary") || lower.Contains("--help") ||
-                         lower.Contains("-h");
+                         lower.Contains("-h") || lower.Contains("--grant-elevation") ||
+                         lower.Contains("--revoke-elevation") || lower.Contains("--elevation-status");
             Trace($"isCli={isCli}");
 
             if (isCli)
@@ -239,6 +240,47 @@ public static class Program
                 return 0;
             }
 
+            // ---------- 静默提权（由首次设置向导调用） ----------
+            if (lower.Contains("--grant-elevation"))
+            {
+                if (!ElevationService.IsElevated())
+                {
+                    Cli("GRANT-ELEVATION: 失败 —— 需要管理员权限才能注册计划任务");
+                    return 1;
+                }
+
+                if (ElevationService.RegisterSilentTask("--background"))
+                {
+                    Cli("GRANT-ELEVATION: 成功 —— 静默提权已开启，之后不再出现 UAC 弹窗");
+                    return 0;
+                }
+
+                Cli("GRANT-ELEVATION: 失败 —— 无法创建计划任务");
+                return 1;
+            }
+
+            if (lower.Contains("--revoke-elevation"))
+            {
+                if (!ElevationService.IsElevated())
+                {
+                    Cli("REVOKE-ELEVATION: 失败 —— 需要管理员权限");
+                    return 1;
+                }
+
+                Cli(ElevationService.DeleteSilentTask()
+                    ? "REVOKE-ELEVATION: 成功 —— 静默提权已关闭"
+                    : "REVOKE-ELEVATION: 失败");
+                return 0;
+            }
+
+            if (lower.Contains("--elevation-status"))
+            {
+                Cli($"当前权限      : {(ElevationService.IsElevated() ? "管理员" : "普通用户")}");
+                Cli($"静默提权已开启: {(ElevationService.IsSilentElevationGranted() ? "是" : "否")}");
+                Cli($"开机自启任务  : {(ElevationService.StartupTaskExists() ? "已注册" : "未注册")}");
+                return 0;
+            }
+
             // ---------- 帮助 ----------
             PrintHelp();
             return 0;
@@ -270,11 +312,18 @@ public static class Program
   --switch-backup                    手动切换到备用网络（需管理员权限）
   --switch-primary                   手动切回校园网
 
+静默提权（避免游戏中被 UAC 弹窗打断）：
+  --grant-elevation                  开启静默提权（需管理员权限，只做一次）
+  --revoke-elevation                 关闭静默提权
+  --elevation-status                 查看当前权限与静默提权状态
+
   --help, -h                         显示本帮助
 
 说明：
   除 --help 外，所有命令成功返回 0，失败返回非 0，便于脚本判断。
   网络热备的自动切换需要管理员权限（修改网络接口跃点数）。
+  推荐用 --grant-elevation 一次性授权：之后程序由最高权限计划任务拉起，
+  全程无 UAC 弹窗。
 """);
     }
 

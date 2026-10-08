@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 9 (API 28) 起默认禁止明文 HTTP。
+  校园网认证服务器是内网明文地址，必须显式放行。
+
+  这里只对**内网地址段**放行，而不是全局打开 cleartext ——
+  公网流量仍然强制 HTTPS，安全性更好。
+-->
+<network-security-config>
+
+  <!-- 默认：禁止明文 -->
+  <base-config cleartextTrafficPermitted="false">
+    <trust-anchors>
+      <certificates src="system" />
+    </trust-anchors>
+  </base-config>
+
+  <!-- 例外：校园网内网（认证服务器所在网段） -->
+  <domain-config cleartextTrafficPermitted="true">
+    <domain includeSubdomains="true">172.18.1.6</domain>
+    <domain includeSubdomains="true">172.18.0.0</domain>
+    <domain includeSubdomains="true">10.0.0.0</domain>
+    <domain includeSubdomains="true">192.168.0.0</domain>
+  </domain-config>
+
+</network-security-config>

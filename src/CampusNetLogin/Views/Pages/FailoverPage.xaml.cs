@@ -134,7 +134,18 @@ public sealed partial class FailoverPage : Page
 
     private void RefreshPrivilege()
     {
-        ElevationBar.IsOpen = _vm.FailoverEnabled && !ElevationService.IsElevated();
+        // ★ 改为「静默提权」模型：不再每次提示管理员，而是一次性授权。
+        //   状态展示三态：已授权 / 已是管理员但未授权 / 普通权限
+        bool granted = _vm.SilentElevationGranted;
+        bool elevated = _vm.IsElevatedNow;
+
+        ElevationStateText.Text = _vm.ElevationSummaryText;
+
+        // 已授权时提供「关闭」入口，否则提供「开启」
+        RevokeElevationButton.Visibility = granted ? Visibility.Visible : Visibility.Collapsed;
+        GrantElevationButton.Visibility = granted ? Visibility.Collapsed : Visibility.Visible;
+
+        ElevationIcon.Glyph = elevated && granted ? "\uE73E" : "\uE7BA";
     }
 
     private void OnFailoverToggled(object sender, RoutedEventArgs e)
@@ -335,25 +346,25 @@ public sealed partial class FailoverPage : Page
     }
 
     // ==================================================================
-    // 提权
+    // 静默提权
     // ==================================================================
-    private async void OnRestartElevated(object sender, RoutedEventArgs e)
+    private async void OnGrantElevation(object sender, RoutedEventArgs e)
     {
         var ok = await Dialogs.ConfirmAsync(
-            "以管理员身份重启",
-            ElevationService.PrivilegeExplanation,
-            primaryText: "重启并提权",
+            "开启静默提权",
+            "自动切换网络需要管理员权限。\n\n" +
+            "接下来 Windows 会弹出一次 UAC 确认框，点「是」授权后，" +
+            "程序会注册一个最高权限的计划任务。\n\n" +
+            "此后所有后台启动都由该任务完成，**不会再出现任何 UAC 弹窗**，" +
+            "打游戏时切换到备用网络也不会被打断。\n\n" +
+            "只授权这一次，之后可随时在这里关闭。",
+            primaryText: "确认授权",
             closeText: "取消",
             root: XamlRoot);
 
         if (!ok) return;
 
-        _vm.SaveConfigQuiet();
-
-        bool started = ElevationService.RestartAsAdministrator("--elevated", () =>
-        {
-            App.InstanceGuard?.ReleaseForRestart();
-        });
+        bool started = _vm.GrantSilentElevation();
 
         if (!started)
         {
@@ -361,8 +372,34 @@ public sealed partial class FailoverPage : Page
             try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
 
             await Dialogs.InfoAsync("已取消提权",
-                "你取消了管理员权限请求。\n\n网络热备的自动切换将无法生效，" +
-                "但登录、检测、后台守护等功能不受影响。");
+                "你取消了管理员权限请求。\n\n" +
+                "网络热备的自动切换将无法生效，但登录、检测、后台守护等功能不受影响。\n" +
+                "随时可以回到这里重新开启。");
+        }
+    }
+
+    private async void OnRevokeElevation(object sender, RoutedEventArgs e)
+    {
+        var ok = await Dialogs.ConfirmAsync(
+            "关闭静默提权",
+            "关闭后，程序下次以管理员身份启动时会重新弹出 UAC 确认框，" +
+            "自动切换网络仍可用但不再静默。\n\n确定要关闭吗？",
+            primaryText: "确认关闭",
+            closeText: "取消",
+            root: XamlRoot);
+
+        if (!ok) return;
+
+        if (_vm.RevokeSilentElevation())
+        {
+            RefreshPrivilege();
+            await Dialogs.InfoAsync("已关闭", "静默提权已关闭。");
+        }
+        else
+        {
+            await Dialogs.InfoAsync("关闭失败",
+                "无法删除计划任务，通常是因为当前不是管理员权限。\n" +
+                "请以管理员身份重启后再试。");
         }
     }
 }

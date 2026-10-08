@@ -38,11 +38,15 @@ public sealed partial class SettingsPage : Page
         RefreshStartupBars();
 
         _vm.PropertyChanged += OnVmPropertyChanged;
+        _vm.PropertyChanged += OnVmElevationChanged;
         _loading = false;
     }
 
     private void OnUnloaded(object sender, RoutedEventArgs e)
-        => _vm.PropertyChanged -= OnVmPropertyChanged;
+    {
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+        _vm.PropertyChanged -= OnVmElevationChanged;
+    }
 
     private void OnVmPropertyChanged(object? s, System.ComponentModel.PropertyChangedEventArgs e)
     {
@@ -56,12 +60,75 @@ public sealed partial class SettingsPage : Page
     private void RefreshStartupBars()
     {
         bool elevated = ElevationService.IsElevated();
+        bool silentGranted = ElevationService.IsSilentElevationGranted();
         bool taskExists = ElevationService.StartupTaskExists();
         var cfg = _vm.CollectConfig(includePassword: false);
 
+        // 自启卡片状态
+        StartupModeText.Text = taskExists
+            ? "当前：计划任务（最高权限 · 无 UAC 弹窗）"
+            : App.Startup.IsEnabled()
+                ? "当前：注册表自启（普通权限 · 自动切换不生效）"
+                : "当前：未开启开机自启";
+
+        // 静默提权未开启 + 已开启自启 → 提示可以升级到计划任务
+        bool taskMissing = !taskExists;
+        StartupTaskBar.IsOpen = taskMissing && cfg.AutoStart && App.Startup.IsEnabled();
+
+        // 计划任务已注册时的信息条
         TaskActiveBar.IsOpen = taskExists;
-        StartupTaskBar.IsOpen = elevated && cfg.AutoStart && !taskExists &&
-                                App.Startup.IsEnabled();
+
+        // 静默提权状态
+        ElevationStatusText.Text = _vm.ElevationSummaryText;
+        GrantElevationButton.Visibility = silentGranted ? Visibility.Collapsed : Visibility.Visible;
+        RevokeElevationButton.Visibility = silentGranted ? Visibility.Visible : Visibility.Collapsed;
+        _ = elevated;
+    }
+
+    private void OnVmElevationChanged(object? s, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(MainViewModel.SilentElevationGranted)
+            or nameof(MainViewModel.ElevationSummaryText))
+        {
+            DispatcherQueue.TryEnqueue(RefreshStartupBars);
+        }
+    }
+
+    private async void OnGrantElevation(object sender, RoutedEventArgs e)
+    {
+        var ok = await Dialogs.ConfirmAsync(
+            "开启静默提权",
+            "自动切换网络需要管理员权限。\n\n" +
+            "接下来 Windows 会弹出一次 UAC 确认框，授权后程序会注册最高权限计划任务，" +
+            "此后后台运行全程不再出现 UAC 弹窗。\n\n" +
+            "只授权这一次，之后可随时在这里关闭。",
+            primaryText: "确认授权", closeText: "取消", root: XamlRoot);
+        if (!ok) return;
+
+        bool started = _vm.GrantSilentElevation();
+        if (!started)
+        {
+            try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
+            await Dialogs.InfoAsync("已取消提权", "你取消了管理员权限请求，随时可以重试。");
+        }
+    }
+
+    private async void OnRevokeElevation(object sender, RoutedEventArgs e)
+    {
+        var ok = await Dialogs.ConfirmAsync("关闭静默提权",
+            "关闭后，程序下次以管理员身份启动会重新弹出 UAC 确认框。\n\n确定要关闭吗？",
+            primaryText: "确认关闭", closeText: "取消", root: XamlRoot);
+        if (!ok) return;
+
+        if (_vm.RevokeSilentElevation())
+        {
+            RefreshStartupBars();
+            await Dialogs.InfoAsync("已关闭", "静默提权已关闭。");
+        }
+        else
+        {
+            await Dialogs.InfoAsync("关闭失败", "无法删除计划任务，请确认当前是管理员权限。");
+        }
     }
 
     // ==================================================================

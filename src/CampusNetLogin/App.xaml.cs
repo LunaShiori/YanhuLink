@@ -43,6 +43,17 @@ public partial class App : Application
     {
         // 解析命令行
         var cmdArgs = Environment.GetCommandLineArgs();
+
+        // ★ 静默提权：由首次设置向导以管理员身份拉起后，注册最高权限计划任务。
+        //   这一步不启动 UI，注册完成即退出，由原实例继续运行。
+        if (cmdArgs.Any(a => a.Equals("--grant-elevation", StringComparison.OrdinalIgnoreCase)))
+        {
+            bool ok = Services.ElevationService.IsElevated() &&
+                      Services.ElevationService.RegisterSilentTask("--background");
+            Environment.Exit(ok ? 0 : 1);
+            return;
+        }
+
         StartInBackground = cmdArgs.Any(a =>
             a.Equals("--background", StringComparison.OrdinalIgnoreCase) ||
             a.Equals("-b", StringComparison.OrdinalIgnoreCase));
@@ -63,6 +74,9 @@ public partial class App : Application
         Log = new LogService();
         Startup = new StartupService();
         ViewModel = new MainViewModel(ConfigStore, Log);
+
+        // 刷新静默提权状态，让界面首屏就能显示正确结果
+        try { ViewModel.RefreshElevationState(); } catch { /* ignore */ }
 
         var mainWindow = new MainWindow();
         MainWindow = mainWindow;

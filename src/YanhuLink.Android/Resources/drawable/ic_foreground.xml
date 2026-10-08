@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  应用图标（前景层）。
+  砚湖水波 + 连接意象，与 Windows 版图标同源。
+
+  自适应图标规格：viewport 必须 108x108，安全区是中间 72x72（四周留 18）。
+  实测形状需要落在安全区内，否则被各厂商的圆角/圆形遮罩裁掉。
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 外围水波环（连接意象：信号扩散） -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M54,24 a30,30 0 1 1 -0.01,0 Z M54,30 a24,24 0 1 0 0.01,0 Z" />
+
+    <!-- 中央水滴主体 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M54,32 C46,44 41,50 41,58 a13,13 0 0 0 26,0 c0,-8 -5,-14 -13,-26 Z" />
+
+    <!-- 水滴内部高光，制造立体感 -->
+    <path
+        android:fillColor="#99BFE3EE"
+        android:pathData="M48,58 a6,6 0 0 0 6,6 a8.5,8.5 0 0 1 -2,-9 a12,12 0 0 0 -4,3 Z" />
+</vector>

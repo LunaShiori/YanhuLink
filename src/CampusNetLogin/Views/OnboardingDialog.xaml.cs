@@ -8,14 +8,14 @@ namespace CampusNetLogin.Views;
 
 /// <summary>
 /// 首次启动向导。
-/// 四步：欢迎 → 账号 → 自动化 → 完成。
+/// 五步：欢迎 → 账号 → 自动化 → 权限（静默提权）→ 完成。
 /// 采用「不写盘、只改内存」的策略，最后一次性提交，
 /// 这样用户中途关掉也不会留下半截配置。
 /// </summary>
 public sealed partial class OnboardingDialog : ContentDialog
 {
     private readonly MainViewModel _vm;
-    private int _step; // 0..3
+    private int _step; // 0..4
 
     private readonly List<StackPanel> _steps = new();
     private readonly List<Border> _dots = new();
@@ -25,8 +25,8 @@ public sealed partial class OnboardingDialog : ContentDialog
         InitializeComponent();
         _vm = vm;
 
-        _steps.AddRange([StepWelcome, StepAccount, StepAutomation, StepDone]);
-        _dots.AddRange([Dot1, Dot2, Dot3, Dot4]);
+        _steps.AddRange([StepWelcome, StepAccount, StepAutomation, StepPermission, StepDone]);
+        _dots.AddRange([Dot1, Dot2, Dot3, Dot4, Dot5]);
 
         IspList.ItemsSource = _vm.Isps;
 
@@ -42,6 +42,7 @@ public sealed partial class OnboardingDialog : ContentDialog
         SecondaryButtonClick += OnSecondaryClick;
         CloseButtonClick += OnCloseClick;
 
+        RefreshPermissionStatus();
         ShowStep(0);
     }
 
@@ -103,13 +104,58 @@ public sealed partial class OnboardingDialog : ContentDialog
         PrimaryButtonText = _step switch
         {
             0 => "开始设置",
-            3 => "完成",
+            _ when last => "完成",
             _ => "下一步",
         };
         SecondaryButtonText = _step == 0 ? string.Empty : "上一步";
         CloseButtonText = last ? string.Empty : "跳过引导";
 
-        if (_step == 3) RefreshSummary();
+        if (_step == 3) RefreshPermissionStatus();
+        if (last) RefreshSummary();
+    }
+
+    // ------------------------------------------------------------------
+    // 权限步骤（静默提权）
+    // ------------------------------------------------------------------
+    private void RefreshPermissionStatus()
+    {
+        bool granted = _vm.SilentElevationGranted;
+
+        PermissionStatusText.Text = granted
+            ? "已授权 —— 后台运行不会再出现弹窗，可以放心打游戏了。"
+            : "尚未授权。断网时程序仍会尝试自动登录，但无法自动切换到手机热点。";
+
+        GrantNowButton.Visibility = granted ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    /// <summary>
+    /// 在向导里直接授权。
+    ///
+    /// 注意：授权会以管理员身份重启程序（当前进程退出），
+    /// 因此向导本身也会被关掉。这是预期行为 —— 重启后用户继续用程序即可，
+    /// 配置在重启前已落盘，不会丢失。
+    /// </summary>
+    private void OnGrantElevationNow(object sender, RoutedEventArgs e)
+    {
+        // 先把当前步骤填的内容推入 VM 并完整提交（含重启守护服务），
+        // 避免提权重启后配置与服务状态不一致
+        PushAccountToVm();
+        _vm.AutoLoginOnStart = AutoLoginSwitch.IsOn;
+        _vm.WatchdogEnabled = WatchdogSwitch.IsOn;
+        _vm.AutoStart = AutoStartSwitch.IsOn;
+
+        // 注意：CommitSetup 内部已包含 FirstRunDone=true 与 SaveConfig，
+        // 因此提权重启后的新实例不会再弹向导，也是配置完整的。
+        _vm.CommitSetup();
+
+        bool started = _vm.GrantSilentElevation();
+
+        if (!started)
+        {
+            // 用户取消了 UAC：恢复单实例锁，继续留在向导里
+            try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
+            RefreshPermissionStatus();
+        }
     }
 
     private void RefreshSummary()

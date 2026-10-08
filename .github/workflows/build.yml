@@ -9,7 +9,7 @@ on:
 
 env:
   # ↓ 改版本号时同步修改这里和 installer/setup.iss 中的 MyAppVersion
-  APP_VERSION: '2.2.0'
+  APP_VERSION: '2.3.0'
 
 # 显式声明工作流权限。
 # 默认 GITHUB_TOKEN 只有只读权限，会导致 action-gh-release 报

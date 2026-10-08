@@ -169,6 +169,29 @@ public sealed class AppConfig
     [JsonPropertyName("failover_notify_on_switch")]
     public bool FailoverNotifyOnSwitch { get; set; } = true;
 
+    /// <summary>
+    /// 游戏 / 全屏时不打扰：切换网络时抑制一切可见提示。
+    ///
+    /// 为什么需要这个开关：
+    ///   打游戏打到一半校园网抖动，程序切换网络本身只需几秒，
+    ///   但一个托盘气泡、甚至一个对话框弹出来夺走焦点，
+    ///   在全屏游戏里可能导致画面卡顿、鼠标失控甚至游戏崩溃。
+    ///   开启后切换过程完全静默，只在日志里留痕。
+    ///
+    /// 判定「是否全屏」由 <c>FullscreenDetector</c> 完成（查询前台窗口是否覆盖屏幕）。
+    /// </summary>
+    [JsonPropertyName("failover_silent_in_fullscreen")]
+    public bool FailoverSilentInFullscreen { get; set; } = true;
+
+    /// <summary>
+    /// 切换时完全静默：连托盘气泡都不发，只在日志里记录。
+    ///
+    /// 比 <see cref="FailoverSilentInFullscreen"/> 更彻底 ——
+    /// 不论是否全屏都不打扰。适合「我知道它在工作，别烦我」的用户。
+    /// </summary>
+    [JsonPropertyName("failover_always_silent")]
+    public bool FailoverAlwaysSilent { get; set; } = false;
+
     /// <summary>备用网络列表（手机热点 / 其他无线网）。</summary>
     [JsonPropertyName("failover_backups")]
     public List<BackupNetwork> FailoverBackups { get; set; } = new();
@@ -256,6 +279,8 @@ public sealed class AppConfig
         FailoverRecoveryThreshold = FailoverRecoveryThreshold,
         FailoverPreemptBackup = FailoverPreemptBackup,
         FailoverNotifyOnSwitch = FailoverNotifyOnSwitch,
+        FailoverSilentInFullscreen = FailoverSilentInFullscreen,
+        FailoverAlwaysSilent = FailoverAlwaysSilent,
         FailoverBackups = FailoverBackups.Select(b => b.Clone()).ToList(),
 
         SpeedMonitorEnabled = SpeedMonitorEnabled,

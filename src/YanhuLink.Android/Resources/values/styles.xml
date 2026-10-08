@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!--
+      主题基类用 Material 的 Light NoActionBar：
+      标题栏由我们自己画（Layout 里放一个 Toolbar 样式的卡片），
+      这样能与 Windows 版保持一致的视觉语言。
+    -->
+    <style name="AppTheme" parent="Theme.MaterialComponents.Light.NoActionBar">
+        <item name="colorPrimary">@color/lake_primary</item>
+        <item name="colorPrimaryDark">@color/lake_primary_dark</item>
+        <item name="colorAccent">@color/lake_accent</item>
+        <item name="android:windowBackground">@color/lake_bg</item>
+        <item name="android:statusBarColor">@color/lake_primary_dark</item>
+        <item name="android:navigationBarColor">@color/lake_bg</item>
+        <item name="android:textColorPrimary">@color/text_primary</item>
+        <item name="android:textColorSecondary">@color/text_secondary</item>
+    </style>
+
+    <!-- ============ 通用样式 ============ -->
+
+    <!-- 页面卡片：白底 + 圆角 -->
+    <style name="CardSurface">
+        <item name="android:background">@drawable/bg_card</item>
+        <item name="android:padding">20dp</item>
+        <item name="android:layout_marginBottom">12dp</item>
+    </style>
+
+    <!-- 卡片小标题 -->
+    <style name="SectionTitle">
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:textColor">@color/text_primary</item>
+    </style>
+
+    <!-- 说明文字 -->
+    <style name="Caption">
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:lineSpacingExtra">3dp</item>
+    </style>
+
+    <!-- 输入框 -->
+    <style name="InputField">
+        <item name="android:background">@drawable/bg_input</item>
+        <item name="android:padding">14dp</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textColor">@color/text_primary</item>
+        <item name="android:textColorHint">@color/text_secondary</item>
+        <item name="android:minHeight">48dp</item>
+    </style>
+
+    <!-- 主按钮 -->
+    <style name="PrimaryButton" parent="Widget.MaterialComponents.Button">
+        <item name="android:backgroundTint">@color/lake_primary</item>
+        <item name="android:textColor">@color/white</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:letterSpacing">0.02</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+
+    <!-- 次按钮（描边） -->
+    <style name="OutlineButton" parent="Widget.MaterialComponents.Button.OutlinedButton">
+        <item name="android:textColor">@color/lake_primary</item>
+        <item name="strokeColor">@color/lake_primary</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+    </style>
+
+</resources>

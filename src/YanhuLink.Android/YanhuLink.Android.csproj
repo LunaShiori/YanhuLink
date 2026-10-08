@@ -1,0 +1,107 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ============================================================
+       砚湖连 YanhuLink —— Android 版
+       ============================================================
+
+       定位（与 Windows 版的区别）：
+         · 只做一件事 —— 连上校园网后自动完成认证
+         · 不含网络热备 / 应急切换（手机上不适用：没有多网卡可切）
+         · 认证核心与 Windows 版**共享同一份源码**（见下方 Compile Include）
+
+       为什么用原生 Android 而不是 MAUI：
+         本项目只需要一个简单界面 + 一个前台服务，
+         MAUI 会引入大量用不到的依赖，APK 体积膨胀明显。
+         原生 Android 更小、启动更快、后台行为更可控。
+
+       构建方式：
+         本机未安装 Android SDK，因此 APK 由 GitHub Actions 构建
+         （见 .github/workflows/android.yml）。CI 自带 JDK 与 Android SDK。
+       ============================================================ -->
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+
+    <RootNamespace>YanhuLink.Android</RootNamespace>
+    <AssemblyName>YanhuLink.Android</AssemblyName>
+    <ApplicationId>cn.edu.yzpc.yanhulink</ApplicationId>
+
+    <ApplicationTitle>砚湖连</ApplicationTitle>
+    <ApplicationVersion>1</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
+    <Version>1.0.0</Version>
+
+    <Product>砚湖连 YanhuLink</Product>
+    <Company>Yangzhou Polytechnic University</Company>
+    <Copyright>Copyright © 2026</Copyright>
+    <Authors>LunaShiori</Authors>
+    <Description>砚湖连 YanhuLink —— 扬州职业技术大学高邮湖校区校园网自动连接工具（Android 版）</Description>
+
+    <!-- Android 打包配置 -->
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidLinkMode>SdkOnly</AndroidLinkMode>
+    <EnableLLVM>false</EnableLLVM>
+    <AndroidSupportedAbis>arm64-v8a;armeabi-v7a</AndroidSupportedAbis>
+
+    <!-- 不生成多语言资源，减小包体 -->
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+
+    <!-- 需要 GBK 代码页解码认证页面（与 Windows 版一致） -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+
+    <!--
+      共享 Windows 版的认证核心源码。
+      这些文件不依赖任何 Windows API（纯 HTTP + 跨平台网络接口），
+      直接 Include 进来即可，避免维护两份实现。
+
+      注意：Android 项目用自己的 AndroidManifest.xml / Resources，
+      所以这里关掉默认 Compile 通配，改为显式列出。
+    -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AndroidManifest>AndroidManifest.xml</AndroidManifest>
+  </PropertyGroup>
+
+  <!-- ===== Android 自身的源码 ===== -->
+  <ItemGroup>
+    <Compile Include="*.cs" />
+  </ItemGroup>
+
+  <!-- ===== 复用自 Windows 版的共享核心 ===== -->
+  <ItemGroup>
+    <Compile Include="..\CampusNetLogin\Models\StatusResult.cs"
+             Link="Shared\StatusResult.cs" />
+    <Compile Include="..\CampusNetLogin\Services\DrComPortalClient.cs"
+             Link="Shared\DrComPortalClient.cs" />
+  </ItemGroup>
+
+  <!-- ===== Android 资源 ===== -->
+  <ItemGroup>
+    <AndroidResource Include="Resources\**\*" />
+  </ItemGroup>
+
+  <!-- ===== 依赖包 ===== -->
+  <ItemGroup>
+    <!-- GBK 解码支持 -->
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+
+    <!--
+      Material 组件（MaterialButton / MaterialCardView / SwitchCompat）。
+      只显式引用 Xamarin.Google.Android.Material：
+      它会把 AppCompat / Core 等传递依赖一起带进来，
+      版本由 NuGet 统一解析，避免手写版本号互相打架（NU1605 降级错误）。
+      这里显式引用 Core 是为了保证 SwitchCompat / ContextCompat / NotificationCompat
+      的 API 可直接使用，版本与 Material 依赖保持一致。
+    -->
+    <PackageReference Include="Xamarin.Google.Android.Material" Version="1.12.0.1" />
+    <PackageReference Include="Xamarin.AndroidX.Core" Version="1.15.0.1" />
+    <PackageReference Include="Xamarin.AndroidX.AppCompat" Version="1.7.0.4" />
+  </ItemGroup>
+
+</Project>

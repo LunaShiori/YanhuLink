@@ -4,22 +4,40 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "CampusNetLogin", "src\CampusNetLogin\CampusNetLogin.csproj", "{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "YanhuLink.Android", "src\YanhuLink.Android\YanhuLink.Android.csproj", "{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
 		Debug|ARM64 = Debug|ARM64
+		Debug|Any CPU = Debug|Any CPU
 		Release|x64 = Release|x64
 		Release|ARM64 = Release|ARM64
+		Release|Any CPU = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(ProjectConfigurationPlatforms) = postSolution
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Debug|x64.ActiveCfg = Debug|x64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Debug|x64.Build.0 = Debug|x64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Debug|ARM64.ActiveCfg = Debug|ARM64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Debug|ARM64.Build.0 = Debug|ARM64
+		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Debug|Any CPU.ActiveCfg = Debug|x64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Release|x64.ActiveCfg = Release|x64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Release|x64.Build.0 = Release|x64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Release|ARM64.ActiveCfg = Release|ARM64
 		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Release|ARM64.Build.0 = Release|ARM64
+		{6B4F1A2C-8D3E-4A51-9C7B-1E2F3A4B5C60}.Release|Any CPU.ActiveCfg = Release|x64
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|x64.Build.0 = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|ARM64.ActiveCfg = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|ARM64.Build.0 = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|x64.ActiveCfg = Release|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|x64.Build.0 = Release|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|ARM64.ActiveCfg = Release|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|ARM64.Build.0 = Release|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A3D8E512-77B4-4C9F-8E21-5F6A9D0C1B72}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

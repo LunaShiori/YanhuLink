@@ -302,17 +302,29 @@ public sealed partial class MainWindow : Window
         _tray?.UpdateNetworkState(BuildTraySummary(snap), onBackup);
 
         // 切换气泡提示
+        //
+        // ★ 静默策略（避免打扰游戏）：
+        //   1) 用户开启「完全静默」→ 一律不发气泡
+        //   2) 用户开启「全屏时静默」且当前有全屏应用在前台 → 不发气泡
+        //   两种情况下切换照常进行，只是不弹任何可见提示（日志里仍有记录）。
+        bool suppressNotify = _vm.FailoverAlwaysSilent ||
+                              (_vm.FailoverSilentInFullscreen &&
+                               FullscreenDetector.IsFullscreenAppActive());
+
         if (onBackup && _vm.NotifyOnSwitch && snap.BackupSsid != _lastNotifiedBackup)
         {
             _lastNotifiedBackup = snap.BackupSsid;
-            _tray?.ShowBalloon("网络热备", snap.TakeoverActive
-                ? $"校园网异常，已切换到备用网络「{snap.BackupSsid}」"
-                : $"已连上「{snap.BackupSsid}」，但未能修改网络优先级（需要管理员权限）");
+            if (!suppressNotify)
+            {
+                _tray?.ShowBalloon("网络热备", snap.TakeoverActive
+                    ? $"校园网异常，已切换到备用网络「{snap.BackupSsid}」"
+                    : $"已连上「{snap.BackupSsid}」，但未能修改网络优先级（需要管理员权限）");
+            }
         }
         else if (snap.State == FailoverState.MonitoringPrimary && _lastNotifiedBackup.Length > 0)
         {
             _lastNotifiedBackup = string.Empty;
-            if (_vm.NotifyOnSwitch && snap.Probe?.IsHealthy == true)
+            if (_vm.NotifyOnSwitch && snap.Probe?.IsHealthy == true && !suppressNotify)
                 _tray?.ShowBalloon("网络热备", "校园网已恢复，已自动切回");
         }
     }

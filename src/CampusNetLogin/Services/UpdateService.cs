@@ -4,6 +4,19 @@ using System.Text.RegularExpressions;
 
 namespace CampusNetLogin.Services;
 
+/// <summary>更新包的形态 —— 决定用哪种方式安装。</summary>
+public enum UpdatePackageKind
+{
+    /// <summary>未知 / 无法识别，只能提示用户手动下载。</summary>
+    Unknown = 0,
+
+    /// <summary>Inno Setup 安装包（.exe），可静默安装。</summary>
+    Installer,
+
+    /// <summary>绿色版压缩包（.zip），需外部脚本解压覆盖。</summary>
+    Portable,
+}
+
 /// <summary>一次更新检查的结果。</summary>
 public sealed record UpdateInfo
 {
@@ -31,8 +44,19 @@ public sealed record UpdateInfo
     /// <summary>安装包直链（若 Release 中带有 Setup 资源）。</summary>
     public string DownloadUrl { get; init; } = string.Empty;
 
+    /// <summary>更新包形态，决定安装方式。</summary>
+    public UpdatePackageKind PackageKind { get; init; } = UpdatePackageKind.Unknown;
+
+    /// <summary>更新包文件名（用于提示文案）。</summary>
+    public string PackageName { get; init; } = string.Empty;
+
     /// <summary>失败原因（仅在 CheckSucceeded 为 false 时有意义）。</summary>
     public string ErrorMessage { get; init; } = string.Empty;
+
+    /// <summary>是否可以直接一键安装（有可识别的包）。</summary>
+    public bool CanAutoInstall =>
+        HasUpdate && !string.IsNullOrEmpty(DownloadUrl) &&
+        PackageKind != UpdatePackageKind.Unknown;
 
     public static UpdateInfo Failed(string reason) =>
         new() { CheckSucceeded = false, ErrorMessage = reason };
@@ -59,7 +83,7 @@ public sealed class UpdateService : IDisposable
     public const string RepoName = "YanhuLink";
 
     /// <summary>当前版本（与 csproj 的 &lt;Version&gt; 保持一致）。</summary>
-    public const string CurrentVersion = "2.2.0";
+    public const string CurrentVersion = "2.3.0";
 
     /// <summary>产品名，用于展示。</summary>
     public const string ProductName = "砚湖连 YanhuLink";
@@ -124,7 +148,7 @@ public sealed class UpdateService : IDisposable
             var notes = root.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
             var url = root.TryGetProperty("html_url", out var u) ? u.GetString() ?? "" : "";
 
-            var (download, mandatory) = PickAsset(root);
+            var (download, kind, pkgName, mandatory) = PickAsset(root);
 
             return new UpdateInfo
             {
@@ -136,6 +160,8 @@ public sealed class UpdateService : IDisposable
                 ReleaseNotes = notes,
                 ReleaseUrl = string.IsNullOrEmpty(url) ? ReleasesPageUrl : url,
                 DownloadUrl = download,
+                PackageKind = kind,
+                PackageName = pkgName,
             };
         }
         catch (OperationCanceledException)
@@ -158,11 +184,29 @@ public sealed class UpdateService : IDisposable
 
     /// <summary>
     /// 从 Release 的 assets 中挑选合适的安装包，并识别是否标记为强制更新。
-    /// 约定：asset 名称含 "Setup" 的优先；说明正文含 "[mandatory]" 视为强制。
+    ///
+    /// 选择策略（重要）：
+    ///   Release 里同时挂着三种文件，要挑对用户最省事的那一个：
+    ///     · Setup.exe                → 安装版用户最合适
+    ///     · -portable.zip            → 绿色版用户最合适
+    ///     · SHA256SUMS.txt           → 校验文件，必须跳过
+    ///     · .apk                     → 安卓包，Windows 版必须跳过
+    ///
+    ///   本程序无法从内部可靠判断「用户装的是哪个形态」，
+    ///   因此约定：**优先选 Setup.exe**（安装版可静默升级，体验最好）；
+    ///   若没有 Setup 才回退到 portable zip。
+    ///   用户若用的是绿色版而 Release 里两种都有，会拿到 Setup.exe ——
+    ///   这不算错：安装版会装到 Program Files，绿色版仍可继续用旧目录，
+    ///   界面上也会同时给出「打开下载页」让用户自己选。
+    ///
+    ///   强制更新约定：说明正文含 "[mandatory]" 即视为强制。
     /// </summary>
-    private static (string downloadUrl, bool mandatory) PickAsset(JsonElement root)
+    private static (string url, UpdatePackageKind kind, string name, bool mandatory) PickAsset(
+        JsonElement root)
     {
         string download = string.Empty;
+        var kind = UpdatePackageKind.Unknown;
+        string pkgName = string.Empty;
         bool mandatory = false;
 
         if (root.TryGetProperty("body", out var body) &&
@@ -175,30 +219,43 @@ public sealed class UpdateService : IDisposable
         if (!root.TryGetProperty("assets", out var assets) ||
             assets.ValueKind != JsonValueKind.Array)
         {
-            return (download, mandatory);
+            return (download, kind, pkgName, mandatory);
         }
 
-        foreach (var asset in assets.EnumerateArray())
+        // 第一轮：找 Setup.exe
+        // 第二轮：找 portable zip
+        for (int pass = 0; pass < 2; pass++)
         {
-            var name = asset.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
-            var url = asset.TryGetProperty("browser_download_url", out var du)
-                ? du.GetString() ?? "" : "";
-            if (string.IsNullOrEmpty(url)) continue;
-
-            if (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) &&
-                name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+            foreach (var asset in assets.EnumerateArray())
             {
-                return (url, mandatory); // 安装包优先，直接返回
-            }
+                var name = asset.TryGetProperty("name", out var n) ? n.GetString() ?? "" : "";
+                var url = asset.TryGetProperty("browser_download_url", out var du)
+                    ? du.GetString() ?? "" : "";
+                if (string.IsNullOrEmpty(url) || string.IsNullOrEmpty(name)) continue;
 
-            if (string.IsNullOrEmpty(download) &&
-                name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            {
-                download = url; // 绿色版兜底
+                // 跳过校验文件与安卓包
+                if (name.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)) continue;
+                if (name.EndsWith(".apk", StringComparison.OrdinalIgnoreCase)) continue;
+
+                if (pass == 0)
+                {
+                    if (name.Contains("Setup", StringComparison.OrdinalIgnoreCase) &&
+                        name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (url, UpdatePackageKind.Installer, name, mandatory);
+                    }
+                }
+                else
+                {
+                    if (name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return (url, UpdatePackageKind.Portable, name, mandatory);
+                    }
+                }
             }
         }
 
-        return (download, mandatory);
+        return (download, kind, pkgName, mandatory);
     }
 
     /// <summary>去掉 v / V 前缀与多余空白。</summary>
@@ -245,22 +302,170 @@ public sealed class UpdateService : IDisposable
     }
 
     /// <summary>
-    /// 【预留】下载并静默安装更新。
+    /// 下载并安装更新。
     ///
-    /// 未启用原因：静默自替换需要区分安装版（走 Inno Setup 的 /SILENT）
-    /// 与绿色版（解压覆盖，但运行中的 exe 无法自我覆盖，需要外部过渡进程）。
-    /// 两种方式都要写大量边界处理，且失败会破坏用户当前可用的程序，
-    /// 因此当前版本选择「提示 → 打开浏览器下载」，把风险交给用户判断。
-    /// 后续如需启用，在此实现即可。
+    /// 两种分发形态走不同路径（由 <see cref="UpdateInfo.PackageKind"/> 区分）：
+    ///
+    ///   · **安装版（Setup.exe）**
+    ///     直接以 `/SILENT /SUPPRESSMSGBOXES /NORESTART` 调用 Inno Setup 安装包。
+    ///     Inno 自己会处理「关闭正在运行的程序 → 覆盖文件 → 重新启动」，
+    ///     是最省事也最可靠的一条路。参数里显式关掉「重启电脑」，
+    ///     避免用户打游戏时被强行重启。
+    ///
+    ///   · **绿色版（portable .zip）**
+    ///     运行中的 exe 无法自我覆盖，因此必须借助一个「外部过渡进程」：
+    ///       1. 把 zip 下载到 %TEMP%
+    ///       2. 写出一个临时 .cmd 脚本，内容是
+    ///          「等待本进程退出 → 解压覆盖 → 重新启动程序 → 自删」
+    ///       3. 以 detached 方式启动该脚本，然后本进程退出
+    ///     脚本用 `ping` 做延时（不依赖外部工具），用 `tar` 解压
+    ///     （Windows 10 1803+ 自带，无需额外依赖）。
+    ///
+    /// 返回 true 表示「已成功交给安装程序/过渡脚本」，此时调用方应尽快退出程序。
+    /// 真正的覆盖动作发生在退出之后。
     /// </summary>
-    public Task<bool> DownloadAndInstallAsync(
+    public async Task<bool> DownloadAndInstallAsync(
         UpdateInfo info, IProgress<double>? progress = null,
         CancellationToken ct = default)
     {
-        _ = info;
-        _ = progress;
-        _ = ct;
-        return Task.FromResult(false);
+        if (info is null || !info.HasUpdate) return false;
+        if (string.IsNullOrWhiteSpace(info.DownloadUrl)) return false;
+
+        try
+        {
+            var fileName = Path.GetFileName(new Uri(info.DownloadUrl).AbsolutePath);
+            if (string.IsNullOrWhiteSpace(fileName)) fileName = "yanhulink-update.bin";
+
+            var tempFile = Path.Combine(Path.GetTempPath(), fileName);
+
+            // ---------- 1. 下载 ----------
+            using var resp = await _http
+                .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct)
+                .ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return false;
+
+            var total = resp.Content.Headers.ContentLength ?? -1L;
+            var received = 0L;
+
+            await using (var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+            await using (var dst = new FileStream(tempFile, FileMode.Create,
+                             FileAccess.Write, FileShare.None, 81920, useAsync: true))
+            {
+                var buffer = new byte[81920];
+                int read;
+                while ((read = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
+                {
+                    await dst.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
+                    received += read;
+                    if (total > 0)
+                        progress?.Report((double)received / total);
+                }
+            }
+
+            if (received == 0) return false;
+
+            // ---------- 2. 交给对应的安装方式 ----------
+            return info.PackageKind switch
+            {
+                UpdatePackageKind.Installer => RunInstaller(tempFile),
+                UpdatePackageKind.Portable => RunPortableReplace(tempFile),
+                _ => false,
+            };
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>安装版：静默调用 Inno Setup 安装包。</summary>
+    private static bool RunInstaller(string setupExe)
+    {
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = setupExe,
+                // /SILENT        显示进度条但不询问
+                // /SUPPRESSMSGBOXES 抑制所有弹窗
+                // /NORESTART     绝不自动重启电脑（游戏场景关键）
+                // /CLOSEAPPLICATIONS 自动关闭正在运行的旧版本
+                Arguments = "/SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS",
+                UseShellExecute = true,
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 绿色版：写一个过渡脚本，等本进程退出后解压覆盖并重启。
+    ///
+    /// 之所以要这么绕：Windows 不允许覆盖正在运行的 exe。
+    /// 必须有一个不属于本进程的「旁观者」来干这件事。
+    /// </summary>
+    private static bool RunPortableReplace(string zipPath)
+    {
+        try
+        {
+            var exePath = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exePath)) return false;
+
+            var appDir = Path.GetDirectoryName(exePath);
+            if (string.IsNullOrEmpty(appDir)) return false;
+
+            var script = Path.Combine(Path.GetTempPath(),
+                $"yanhulink-update-{Guid.NewGuid():N}.cmd");
+
+            // 用 ping 做延时（Windows 自带、不需要 sleep.exe）；
+            // 用 tar 解压（Win10 1803+ 内置 bsdtar，支持 zip）。
+            var lines = new[]
+            {
+                "@echo off",
+                "chcp 65001 >nul",
+                "rem 等待旧进程完全退出，否则文件会被占用",
+                ":wait",
+                "tasklist /FI \"PID eq __PID__\" 2>nul | find \"__PID__\" >nul",
+                "if not errorlevel 1 ( ping -n 2 127.0.0.1 >nul & goto wait )",
+                "",
+                "rem 解压覆盖到程序目录",
+                $"tar -xf \"{zipPath}\" -C \"{appDir}\"",
+                "",
+                "rem 重启程序",
+                $"start \"\" \"{exePath}\"",
+                "",
+                "rem 清理临时文件",
+                $"del /f /q \"{zipPath}\" >nul 2>nul",
+                "del /f /q \"%~f0\" >nul 2>nul",
+            };
+
+            var pid = Environment.ProcessId.ToString();
+            var content = string.Join("\r\n", lines).Replace("__PID__", pid);
+
+            File.WriteAllText(script, content,
+                new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = $"/c \"{script}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = System.Diagnostics.ProcessWindowStyle.Hidden,
+            });
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>用系统默认方式打开链接（更新说明页 / 下载地址）。</summary>
