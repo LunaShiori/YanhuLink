@@ -1,0 +1,40 @@
+## 构建产物
+bin/
+obj/
+publish/
+build/
+artifacts/
+
+## Visual Studio
+.vs/
+*.user
+*.suo
+*.userprefs
+
+## Rider / VS Code
+.idea/
+.vscode/
+
+## 安装包产物
+installer/Output/
+*.exe
+*.msi
+*.msix
+
+## 本地配置与日志（可能含账号信息，切勿提交）
+config.json
+campus_login_config.json
+*.log
+*.tmp
+
+## AI 辅助开发工具的本地工作目录（个人笔记/记忆，与项目本身无关）
+.workbuddy/
+
+## 开发期一次性的辅助脚本（截图、挪窗口等，与项目功能无关）
+tools/cap.cs
+tools/move_window.ps1
+
+## Windows
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/

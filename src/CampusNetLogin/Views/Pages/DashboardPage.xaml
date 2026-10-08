@@ -1,0 +1,238 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="CampusNetLogin.Views.Pages.DashboardPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        HorizontalScrollMode / HorizontalScrollBarVisibility 必须显式关掉。
+        默认（Auto）会把内容按「无限宽」测量，导致内部 Grid 的 * 列被撑开、
+        右侧按钮与第四张指标卡溢出到窗口外被裁掉。
+    -->
+    <ScrollViewer VerticalScrollBarVisibility="Auto"
+                  HorizontalScrollMode="Disabled"
+                  HorizontalScrollBarVisibility="Disabled">
+        <StackPanel Padding="28,24,28,32" Spacing="16" MaxWidth="980"
+                    HorizontalAlignment="Left">
+
+            <StackPanel>
+                <TextBlock Text="首页" Style="{StaticResource PageTitleStyle}" />
+                <TextBlock Style="{StaticResource PageSubtitleStyle}"
+                           Text="当前联网状态一览。多数时候你不需要操作，程序会自己工作。" />
+            </StackPanel>
+
+            <!-- ================= 状态主卡 ================= -->
+            <Border Style="{StaticResource CardStyle}" Padding="24,22">
+                <Grid ColumnSpacing="20">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <!-- 状态圆环 -->
+                    <Grid Grid.Column="0" Width="64" Height="64" VerticalAlignment="Center">
+                        <Ellipse x:Name="StatusRing" Width="64" Height="64" Opacity="0.16"
+                                 Fill="{StaticResource StatusUnknownBrush}" />
+                        <Ellipse x:Name="StatusDot" Width="30" Height="30"
+                                 Fill="{StaticResource StatusUnknownBrush}">
+                            <Ellipse.RenderTransform>
+                                <ScaleTransform x:Name="StatusDotScale" CenterX="15" CenterY="15" />
+                            </Ellipse.RenderTransform>
+                        </Ellipse>
+                        <ProgressRing x:Name="BusyRing" Width="64" Height="64" IsActive="False"
+                                      Foreground="{StaticResource StatusBusyBrush}" />
+                    </Grid>
+
+                    <!-- 状态文字 -->
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                        <TextBlock x:Name="StatusTitle" Text="未检测"
+                                   FontSize="24" FontWeight="SemiBold"
+                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}" />
+                        <TextBlock x:Name="StatusSubtitle" Text="点击右侧「检查状态」开始"
+                                   FontSize="12.5" TextTrimming="CharacterEllipsis"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+
+                    <!-- 操作 -->
+                    <StackPanel Grid.Column="2" VerticalAlignment="Center" Spacing="8"
+                                MinWidth="132">
+                        <Button x:Name="PrimaryActionButton" Click="OnPrimaryAction"
+                                Style="{StaticResource HeroButtonStyle}"
+                                Content="检查状态" />
+                        <Button x:Name="SecondaryActionButton" Click="OnSecondaryAction"
+                                HorizontalAlignment="Stretch"
+                                HorizontalContentAlignment="Center"
+                                Content="立即登录" />
+                        <HyperlinkButton x:Name="SpeedTestLink" Click="OnSpeedTestClick"
+                                         HorizontalAlignment="Center" Padding="4,0"
+                                         ToolTipService.ToolTip="下载一小段数据（不超过 512KB）估算当前带宽">
+                            <StackPanel Orientation="Horizontal" Spacing="5">
+                                <FontIcon Glyph="&#xE9D9;" FontSize="12" />
+                                <TextBlock Text="测速" FontSize="12" />
+                            </StackPanel>
+                        </HyperlinkButton>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ================= 指标行 ================= -->
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <!-- 当前网络 -->
+                <Border Grid.Column="0" Style="{StaticResource TightCardStyle}">
+                    <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon x:Name="NetKindIcon" Glyph="&#xE701;" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                      VerticalAlignment="Center" />
+                            <TextBlock Text="当前网络" Style="{StaticResource MetricLabelStyle}" />
+                        </StackPanel>
+                        <TextBlock x:Name="NetNameText" Text="—" Style="{StaticResource MetricValueStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="NetDetailText" Text="等待检测" Style="{StaticResource CaptionStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 延迟 -->
+                <Border Grid.Column="1" Style="{StaticResource TightCardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="延迟" Style="{StaticResource MetricLabelStyle}" />
+                        <TextBlock x:Name="LatencyText" Text="—" Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="越低越好" Style="{StaticResource CaptionStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 丢包 -->
+                <Border Grid.Column="2" Style="{StaticResource TightCardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="丢包" Style="{StaticResource MetricLabelStyle}" />
+                        <TextBlock x:Name="LossText" Text="—" Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="越低越好" Style="{StaticResource CaptionStyle}" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 实时速率（本次新增） -->
+                <Border Grid.Column="3" Style="{StaticResource TightCardStyle}">
+                    <StackPanel Spacing="6">
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <FontIcon x:Name="SpeedIcon" Glyph="&#xE9D9;" FontSize="12"
+                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                      VerticalAlignment="Center" />
+                            <TextBlock Text="实时速率" Style="{StaticResource MetricLabelStyle}" />
+                        </StackPanel>
+                        <TextBlock x:Name="SpeedText" Text="—" Style="{StaticResource MetricValueStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                        <TextBlock x:Name="SpeedCaptionText" Text="实时流量"
+                                   Style="{StaticResource CaptionStyle}"
+                                   TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 热备状态 -->
+                <Border Grid.Column="4" Style="{StaticResource TightCardStyle}">
+                    <StackPanel Spacing="6">
+                        <TextBlock Text="网络热备" Style="{StaticResource MetricLabelStyle}" />
+                        <TextBlock x:Name="FailoverStateText" Text="未启用"
+                                   Style="{StaticResource MetricValueStyle}" />
+                        <TextBlock Text="点击查看详情" Style="{StaticResource CaptionStyle}" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <!-- ================= 热备提示条 ================= -->
+            <Border x:Name="FailoverCard" Style="{StaticResource CardStyle}" Padding="18,16"
+                    Visibility="Collapsed">
+                <Grid ColumnSpacing="14">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto" />
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="Auto" />
+                    </Grid.ColumnDefinitions>
+
+                    <Border Grid.Column="0" Width="38" Height="38" CornerRadius="10"
+                            Background="{ThemeResource BrandPrimaryBrush}" Opacity="0.14"
+                            VerticalAlignment="Center">
+                        <FontIcon x:Name="FailoverCardIcon" Glyph="&#xE7F4;" FontSize="17"
+                                  Foreground="{ThemeResource BrandPrimaryBrush}" />
+                    </Border>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="3">
+                        <TextBlock x:Name="FailoverCardTitle" Text="网络热备已开启"
+                                   FontSize="13.5" FontWeight="SemiBold" />
+                        <TextBlock x:Name="FailoverCardDetail" Style="{StaticResource CaptionStyle}"
+                                   Text="校园网正常" />
+                    </StackPanel>
+
+                    <Button Grid.Column="2" Content="查看详情" Click="OnGoFailover"
+                            VerticalAlignment="Center" Padding="12,6" />
+                </Grid>
+            </Border>
+
+            <!-- ================= 更新提示 ================= -->
+            <InfoBar x:Name="UpdateBar" IsOpen="False" IsClosable="True"
+                     Severity="Informational" Title="发现新版本">
+                <InfoBar.ActionButton>
+                    <Button Content="查看更新" Padding="12,5" Click="OnViewUpdate" />
+                </InfoBar.ActionButton>
+            </InfoBar>
+
+            <!-- ================= 最近日志 ================= -->
+            <Border Style="{StaticResource CardStyle}" Padding="20,16">
+                <StackPanel>
+                    <Grid Margin="0,0,0,12">
+                        <TextBlock Text="最近动态" Style="{StaticResource SectionHeaderStyle}"
+                                   Margin="0" VerticalAlignment="Center" />
+                        <Button Content="查看全部" Click="OnGoLogs"
+                                HorizontalAlignment="Right" Padding="10,4" FontSize="12" />
+                    </Grid>
+
+                    <StackPanel x:Name="EmptyLogHint" Spacing="6" Margin="0,10,0,10">
+                        <TextBlock Style="{StaticResource CaptionStyle}"
+                                   Text="暂无动态。登录或检测后，这里会显示最近发生的事情。" />
+                    </StackPanel>
+
+                    <ItemsControl x:Name="RecentLogList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate>
+                                <Grid ColumnSpacing="12" Margin="0,3">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="Auto" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+
+                                    <TextBlock Grid.Column="0" Text="{Binding TimeText}"
+                                               Style="{StaticResource MonoStyle}"
+                                               Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+
+                                    <Border Grid.Column="1" CornerRadius="4" Padding="6,1"
+                                            VerticalAlignment="Center"
+                                            Background="{Binding LevelBrush}">
+                                        <TextBlock Text="{Binding LevelText}" FontSize="10"
+                                                   Foreground="White" FontWeight="SemiBold" />
+                                    </Border>
+
+                                    <TextBlock Grid.Column="2" Text="{Binding Message}"
+                                               FontSize="12.5" TextTrimming="CharacterEllipsis"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Grid>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</Page>

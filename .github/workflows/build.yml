@@ -1,0 +1,115 @@
+name: Build & Release
+
+# 触发：推送 tag（如 v2.0.0）或手动触发
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  # ↓ 改版本号时同步修改这里和 installer/setup.iss 中的 MyAppVersion
+  APP_VERSION: '2.0.0'
+
+jobs:
+  build-x64:
+    runs-on: windows-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: 还原依赖
+        run: dotnet restore src/CampusNetLogin/CampusNetLogin.csproj -p:Platform=x64
+
+      # 发布「自包含」产物。
+      # 关键：必须同时满足
+      #   1) --self-contained true        → 自带 .NET 运行时
+      #   2) -p:WindowsAppSDKSelfContained=true → 自带 Windows App Runtime
+      #   3) 不要用 PublishSingleFile     → 单文件会破坏 WinUI 的 Runtime 解析，
+      #      导致用户机器上弹「This application requires the Windows App Runtime」
+      - name: 发布自包含版（绿色版基础）
+        run: >
+          dotnet publish src/CampusNetLogin/CampusNetLogin.csproj
+          -c Release -r win-x64 -p:Platform=x64
+          --self-contained true
+          -p:WindowsAppSDKSelfContained=true
+          -p:PublishSingleFile=false
+          -p:DebugType=none
+          -o publish/win-x64
+
+      - name: 精简卫星语言包（仅保留中英）
+        shell: pwsh
+        run: |
+          Get-ChildItem publish/win-x64 -Directory |
+            Where-Object { $_.Name -match '^[a-z]{2,3}(-[A-Za-z]+)?$' } |
+            Where-Object { $_.Name -notin @('zh-CN','zh-TW','en-US') } |
+            Remove-Item -Recurse -Force
+          Remove-Item publish/win-x64/*.pdb -Force -ErrorAction SilentlyContinue
+
+      - name: 准备绿色版附加文件
+        shell: pwsh
+        run: |
+          Copy-Item README.md, LICENSE -Destination publish/win-x64/ -Force
+
+      - name: 打包绿色版 ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path publish/win-x64/* `
+            -DestinationPath "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip"
+
+      - name: 安装 Inno Setup
+        run: choco install innosetup -y --no-progress
+
+      # Inno Setup 官方不内置中文语言包，CI 上需要先补进去，
+      # 否则 setup.iss 的 [Languages] 会报 "Couldn't open include file"
+      - name: 安装简体中文语言包
+        shell: pwsh
+        run: |
+          $dir = "C:\Program Files (x86)\Inno Setup 6\Languages"
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $url = "https://cdn.jsdelivr.net/gh/jrsoftware/issrc@is-7_1_0/Files/Languages/ChineseSimplified.isl"
+          Invoke-WebRequest -Uri $url -OutFile "$dir\ChineseSimplified.isl" -UseBasicParsing
+          Write-Host "已下载语言包: $((Get-Item "$dir\ChineseSimplified.isl").Length) 字节"
+
+      - name: 生成安装包
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup 编译失败" }
+
+      - name: 计算校验和
+        shell: pwsh
+        run: |
+          Get-FileHash "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" } |
+            Out-File -Encoding utf8 SHA256SUMS.txt
+          Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256 |
+            ForEach-Object { "$($_.Hash)  YanhuLink-Setup-x64.exe" } |
+            Out-File -Encoding utf8 -Append SHA256SUMS.txt
+          Get-Content SHA256SUMS.txt
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: YanhuLink-win-x64
+          path: |
+            YanhuLink-v*-win-x64-portable.zip
+            installer/Output/*.exe
+            SHA256SUMS.txt
+
+      - name: 创建 Release（仅 tag 触发）
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            YanhuLink-v*-win-x64-portable.zip
+            installer/Output/*.exe
+            SHA256SUMS.txt
+          generate_release_notes: true
+          draft: false
+          prerelease: false

@@ -1,0 +1,91 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <RootNamespace>CampusNetLogin</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Platforms>x64;ARM64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <UseWinUI>true</UseWinUI>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <WindowsPackageType>None</WindowsPackageType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>CampusNetLogin</AssemblyName>
+    <ApplicationTitle>砚湖连</ApplicationTitle>
+    <ApplicationId>CampusNetLogin</ApplicationId>
+    <ApplicationDisplayVersion>2.1</ApplicationDisplayVersion>
+    <ApplicationVersion>2</ApplicationVersion>
+    <Version>2.1.0</Version>
+    <Product>砚湖连 YanhuLink</Product>
+    <Company>Yangzhou Polytechnic University</Company>
+    <Copyright>Copyright © 2026</Copyright>
+    <Authors>LunaShiori</Authors>
+    <Description>砚湖连 YanhuLink —— 扬州职业技术大学高邮湖校区校园网自动连接工具（Dr.COM 哆点 eportal）</Description>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
+
+    <!-- 使用自定义 Program.Main（支持 CLI 参数），禁用 WinUI 自动生成的入口点 -->
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+
+    <!-- ============================================================
+         发布配置（重要！）
+         ============================================================
+         WindowsAppSDKSelfContained=true 是关键：
+         它会把 Windows App Runtime 本体（Microsoft.WindowsAppRuntime.dll 等）
+         一起打包进产物，用户无需单独安装「Windows App Runtime」。
+
+         若不开这个开关，程序启动时会去系统里找匹配版本的 Runtime，
+         找不到就弹出「This application requires the Windows App Runtime」
+         对话框。而 Runtime 是按主次版本精确匹配的（本工程用 1.6.x），
+         用户装 2.x 或 1.7.x 都不管用 —— 这正是之前踩过的坑。
+
+         注意：该开关只在 dotnet publish 时生效，dotnet build 的输出
+         仍然依赖系统 Runtime，因此测试务必用 publish 产物。
+         ============================================================ -->
+    <SelfContained>true</SelfContained>
+    <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <PublishReadyToRun>false</PublishReadyToRun>
+
+    <!-- 关闭卫星资源，减小体积（本程序只有中英文，且不用 WinUI 本地化资源） -->
+    <SatelliteResourceLanguages>zh-Hans;en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.6.250205002" />
+    <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.1742" />
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
+  </ItemGroup>
+
+  <!--
+    资源文件必须显式声明 CopyToOutputDirectory / CopyToPublishDirectory，
+    否则 dotnet publish 不会把 Assets 目录带进产物 —— 会导致
+    AppWindow.SetIcon("Assets/app.ico") 找不到文件、托盘图标退化为默认图标。
+  -->
+  <ItemGroup>
+    <Content Include="Assets\app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+    <Content Include="Assets\app.png">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
+  </ItemGroup>
+
+  <!-- XAML 资源字典需要显式声明为 Page -->
+  <ItemGroup>
+    <Page Update="Styles\Theme.xaml">
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
+
+  <!-- 需要代码页编码支持（GBK 解码认证页面） -->
+  <ItemGroup>
+    <PackageReference Include="System.Text.Encoding.CodePages" Version="8.0.0" />
+  </ItemGroup>
+
+</Project>
