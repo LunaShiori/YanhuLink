@@ -108,27 +108,39 @@ jobs:
           #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
           # 后者读的是仓库里 **提交过的文件**，可能残留上一个版本的旧哈希，
           # 合并后会污染校验文件（此前 v2.3.0 就误带进了 v2.2.0 的行）。
+          #
+          # 并行竞态：谁先跑完谁先 upload，后跑的才看得到对方的行。
+          # 本工作流跑得久，故在此**轮询等待** Android 的校验行出现
+          # （最多约 4 分钟），拿到即合并；超时则退化为只含 Windows 两行，
+          # 不会让步骤失败。
           $prev = @()
           $releaseNames = @()
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
-            try {
-              $rel = Invoke-RestMethod `
-                -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" `
-                -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -ErrorAction Stop
-              $releaseNames = @($rel.assets | ForEach-Object { $_.name })
-              $sumAsset = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
-              if ($sumAsset) {
-                $text = Invoke-RestMethod -Uri $sumAsset.url `
-                          -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream" } `
-                          -ErrorAction Stop
-                $body = if ($text -is [byte[]]) { [Text.Encoding]::UTF8.GetString($text) } else { [string]$text }
-                # 只保留「文件名确实存在于本次 Release」的行，避免旧版本残留
-                $prev = @($body -split "`n" |
-                          Where-Object { $_ -match '[0-9a-f]{64}' } |
-                          Where-Object { $n = ($_ -split '\s+')[1]; $releaseNames -contains $n })
-              }
-            } catch { $prev = @() }
+            $deadline = (Get-Date).AddMinutes(4)
+            do {
+              try {
+                $rel = Invoke-RestMethod `
+                  -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" `
+                  -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -ErrorAction Stop
+                $releaseNames = @($rel.assets | ForEach-Object { $_.name })
+                $sumAsset = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
+                if ($sumAsset) {
+                  $text = Invoke-RestMethod -Uri $sumAsset.url `
+                            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream" } `
+                            -ErrorAction Stop
+                  $body = if ($text -is [byte[]]) { [Text.Encoding]::UTF8.GetString($text) } else { [string]$text }
+                  # 只保留「文件名确实存在于本次 Release」的行，避免旧版本残留
+                  $prev = @($body -split "`n" |
+                            Where-Object { $_ -match '[0-9a-f]{64}' } |
+                            Where-Object { $n = ($_ -split '\s+')[1]; $releaseNames -contains $n })
+                }
+                # 已经拿到 Android 的行就不必再等
+                if ($prev | Where-Object { $_ -match 'android\.apk' }) { break }
+              } catch { $prev = @() }
+              if ((Get-Date) -ge $deadline) { break }
+              Start-Sleep -Seconds 15
+            } while ($true)
           }
 
           # 去掉与本次重复的行（按文件名去重），再做合并

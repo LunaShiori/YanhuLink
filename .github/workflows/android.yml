@@ -128,32 +128,38 @@ jobs:
             TAG="${GITHUB_REF#refs/tags/}"
             MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
 
-            REL_JSON=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null)
-            RELEASE_NAMES=$(printf '%s' "$REL_JSON" | grep -o '"name": *"[^"]*"' | sed 's/.*"name": *"//; s/"$//')
-            ASSET_URL=$(printf '%s' "$REL_JSON" | tr '{},' '\n\n\n' \
-                        | grep -o '"browser_download_url": *"[^"]*SHA256SUMS\.txt"' \
-                        | head -1 | sed 's/.*"browser_download_url": *"//; s/"$//')
+            # 并行竞态：Windows 工作流跑得久，可能在本次执行时还没上传它那份。
+            # 这里轮询等待（最多约 4 分钟）直到看到 Windows 的行，拿到即合并。
+            DEADLINE=$(( $(date +%s) + 240 ))
+            while :; do
+              REL_JSON=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                   "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null)
+              RELEASE_NAMES=$(printf '%s' "$REL_JSON" | grep -o '"name": *"[^"]*"' | sed 's/.*"name": *"//; s/"$//')
+              ASSET_URL=$(printf '%s' "$REL_JSON" | tr '{},' '\n\n\n' \
+                          | grep -o '"browser_download_url": *"[^"]*SHA256SUMS\.txt"' \
+                          | head -1 | sed 's/.*"browser_download_url": *"//; s/"$//')
 
+              if [ -n "$ASSET_URL" ]; then
+                curl -sSL -H "Authorization: Bearer $GH_TOKEN" "$ASSET_URL" -o existing.txt 2>/dev/null
+                : > merged.txt
+                if [ -s existing.txt ]; then
+                  while IFS= read -r line; do
+                    echo "$line" | grep -qE '[0-9a-f]{64}' || continue
+                    fname=$(echo "$line" | awk '{print $2}')
+                    echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
+                  done < existing.txt
+                fi
+                if [ -s merged.txt ]; then
+                  grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null
+                  cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
+                fi
+                # 已拿到 Windows 的行就收工
+                grep -qE 'Setup-x64\.exe|win-x64-portable\.zip' SHA256SUMS.txt 2>/dev/null && break
+              fi
+              [ "$(date +%s)" -ge "$DEADLINE" ] && break
+              sleep 15
+            done
             echo "release assets:"; printf '%s\n' "$RELEASE_NAMES"
-            echo "sums asset url: $ASSET_URL"
-
-            if [ -n "$ASSET_URL" ]; then
-              curl -sSL -H "Authorization: Bearer $GH_TOKEN" "$ASSET_URL" -o existing.txt 2>/dev/null
-              : > merged.txt
-              if [ -s existing.txt ]; then
-                while IFS= read -r line; do
-                  echo "$line" | grep -qE '[0-9a-f]{64}' || continue
-                  fname=$(echo "$line" | awk '{print $2}')
-                  echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
-                done < existing.txt
-              fi
-              # 去掉与本次 Android 同名的重复行，再与自己的行合并
-              if [ -s merged.txt ]; then
-                grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null
-                cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
-              fi
-            fi
           fi
           set -e
 
