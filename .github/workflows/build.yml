@@ -91,13 +91,34 @@ jobs:
 
       - name: 计算校验和
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          Get-FileHash "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash)  YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" } |
-            Out-File -Encoding utf8 SHA256SUMS.txt
-          Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256 |
-            ForEach-Object { "$($_.Hash)  YanhuLink-Setup-x64.exe" } |
-            Out-File -Encoding utf8 -Append SHA256SUMS.txt
+          # 先生成本工作流自己的两行
+          $mine = @()
+          $mine += (Get-FileHash "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" -Algorithm SHA256 |
+                    ForEach-Object { "$($_.Hash)  YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" })
+          $mine += (Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256 |
+                    ForEach-Object { "$($_.Hash)  YanhuLink-Setup-x64.exe" })
+
+          # Android 工作流与本工作流并行，都会写 Release 上的 SHA256SUMS.txt。
+          # 直接整体覆盖会把 Android 的行冲掉，所以先取回远端已有内容并合并。
+          $prev = @()
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
+            try {
+              $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/SHA256SUMS.txt?ref=$tag" `
+                        -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github.raw" } `
+                        -ErrorAction Stop
+              $prev = @($resp -split "`n" | Where-Object { $_ -match '[0-9a-f]{64}' })
+            } catch { $prev = @() }
+          }
+
+          # 去掉与本次重复的行（按文件名去重），再做合并
+          $myNames = $mine | ForEach-Object { ($_ -split '\s+')[1] }
+          $kept = $prev | Where-Object { $n = ($_ -split '\s+')[1]; $myNames -notcontains $n }
+
+          ($kept + $mine) | Out-File -Encoding utf8 SHA256SUMS.txt
           Get-Content SHA256SUMS.txt
 
       - name: 上传构建产物

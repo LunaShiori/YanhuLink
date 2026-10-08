@@ -21,11 +21,32 @@
 
   <PropertyGroup>
     <TargetFramework>net8.0-android</TargetFramework>
+
+    <!--
+      必须显式锁定 TargetPlatformVersion = 34。
+      不写的话，由 SDK 自动推断（AndroidX 包声明的最低 API 为 34）；
+      但 CI runner 上若装了更高版本的 .NET SDK（如 10.x），
+      推断结果会退到 21，导致 AndroidX 包报 NU1202「不兼容 net8.0-android21.0」。
+      显式写死 34 可让"本机 / CI"行为一致。
+    -->
+    <TargetPlatformVersion>34</TargetPlatformVersion>
     <SupportedOSPlatformVersion>26</SupportedOSPlatformVersion>
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+
+    <!--
+      net8.0-android 已进入 EOL 阶段：新版 .NET SDK（10.x）会把
+      NETSDK1202（workload 已停止支持）当作**错误**抛出，直接中断 restore。
+      项目仍按 net8.0-android 构建（AndroidX 生态目前以此为主），
+      因此需要显式把该诊断降级为"不报"，否则 CI 无法还原依赖。
+      升级到 net9.0-android / net10.0-android 需同步升级全部 Xamarin.AndroidX 包，
+      属独立的迁移工作，此处不做。
+    -->
+    <CheckEolTargetFramework>false</CheckEolTargetFramework>
+    <NoWarn>$(NoWarn);NETSDK1202</NoWarn>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
 
     <RootNamespace>YanhuLink.Android</RootNamespace>
     <AssemblyName>YanhuLink.Android</AssemblyName>

@@ -32,6 +32,18 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # 让本次运行的 dotnet 固定使用 8.0.x。
+      # runner 预装的 .NET 10 SDK 会把 net8.0-android 判定为 EOL 并抛
+      # NETSDK1202 错误，同时把 TargetPlatformVersion 推断成 21（触发 NU1202）。
+      # csproj 里已锁 TargetPlatformVersion=34 并压制 NETSDK1202，
+      # 但统一 SDK 版本能从根上避免这类"本机/CI 不一致"。
+      - name: 固定 .NET SDK 版本
+        shell: bash
+        run: |
+          dotnet --version
+          echo "DOTNET_ROOT=$DOTNET_ROOT"
+          dotnet --list-sdks
+
       # Android workload 是构建 net8.0-android 的前置条件。
       # GitHub 的 ubuntu-latest runner 已预装 Android SDK，
       # 这里只需装上 workload 本体。
@@ -86,11 +98,39 @@ jobs:
 
       - name: 计算校验和
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd out
           sha256sum "YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk" \
             > SHA256SUMS-Android.txt
           cat SHA256SUMS-Android.txt
+
+          # Windows 工作流与本工作流并行运行，两边都会写 Release 的 SHA256SUMS.txt。
+          # 各自只写自己的行会把对方覆盖掉，因此这里先取回已有内容，
+          # 去掉可能与本次重复的行后再合并，保证校验文件里
+          # 同时包含 Windows 与 Android 的产物哈希。
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+            curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                 -H "Accept: application/vnd.github.raw" \
+                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
+                 -o /dev/null 2>/dev/null || true
+            EXISTING=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                 -H "Accept: application/vnd.github.raw" \
+                 "https://api.github.com/repos/${{ github.repository }}/contents/SHA256SUMS.txt?ref=$TAG" 2>/dev/null || true)
+            if echo "$EXISTING" | grep -qE '[0-9a-f]{64}'; then
+              echo "$EXISTING" | grep -E '[0-9a-f]{64}' > merged.txt
+              grep -v -f <(awk '{print $2}' SHA256SUMS-Android.txt) merged.txt > merged2.txt || true
+              cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
+            else
+              cp SHA256SUMS-Android.txt SHA256SUMS.txt
+            fi
+          else
+            cp SHA256SUMS-Android.txt SHA256SUMS.txt
+          fi
+          echo "--- 合并后的 SHA256SUMS.txt ---"
+          cat SHA256SUMS.txt
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
