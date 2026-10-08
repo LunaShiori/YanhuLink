@@ -113,13 +113,18 @@ jobs:
           # 本工作流跑得久，故在此**轮询等待** Android 的校验行出现
           # （最多约 4 分钟），拿到即合并；超时则退化为只含 Windows 两行，
           # 不会让步骤失败。
-          # 把任意换行（LF / CRLF）切成行，并丢掉空行与不含哈希的噪声行
+          # 把任意换行（LF / CRLF）切成行，并丢掉空行与不含哈希的噪声行。
+          #
+          # 注意：这里**不能**用 \s+ 作为「哈希与文件名之间的分隔符」，
+          # 因为 \s 会匹配换行符——当上游附件是「多行被粘成一行」时，
+          # 整份内容会被当成一条合法记录保留下来，粘行就永久传下去。
+          # 因此分隔符严格限定为 空格/制表符。
           function Get-SumLines([string]$body, [string[]]$allowed) {
             if ([string]::IsNullOrEmpty($body)) { return @() }
             @($body -split "`r?`n" |
               ForEach-Object { $_.Trim() } |
-              Where-Object { $_ -match '^[0-9a-fA-F]{64}\s+\S+$' } |
-              Where-Object { $n = ($_ -split '\s+')[-1]; $allowed -contains $n })
+              Where-Object { $_ -match '^[0-9a-fA-F]{64}[ \t]+[^ \t]+$' } |
+              Where-Object { $n = ($_ -split '[ \t]+')[-1]; $allowed -contains $n })
           }
 
           $prev = @()
@@ -150,9 +155,10 @@ jobs:
             } while ($true)
           }
 
-          # 去掉与本次重复的行（按文件名去重），再做合并
-          $myNames = $mine | ForEach-Object { ($_ -split '\s+')[-1] }
-          $kept = $prev | Where-Object { $n = ($_ -split '\s+')[-1]; $myNames -notcontains $n }
+          # 去掉与本次重复的行（按文件名去重），再做合并。
+          # 同样只用 空格/制表符 切分，避免把换行当成分隔符。
+          $myNames = $mine | ForEach-Object { ($_ -split '[ \t]+')[-1] }
+          $kept = $prev | Where-Object { $n = ($_ -split '[ \t]+')[-1]; $myNames -notcontains $n }
 
           # 用 LF 逐行写出：避免 Windows 端 CRLF 与 Android 端 LF 混用
           $all = @($kept + $mine)
