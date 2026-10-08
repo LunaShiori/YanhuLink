@@ -1,6 +1,6 @@
 name: Build & Release
 
-# 触发：推送 tag（如 v2.0.0）或手动触发
+# 触发：推送 tag（如 v2.1.0）或手动触发
 on:
   push:
     tags:
@@ -9,7 +9,7 @@ on:
 
 env:
   # ↓ 改版本号时同步修改这里和 installer/setup.iss 中的 MyAppVersion
-  APP_VERSION: '2.0.0'
+  APP_VERSION: '2.1.0'
 
 jobs:
   build-x64:

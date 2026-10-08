@@ -98,8 +98,8 @@ public sealed class UpdateService : IDisposable
         if (!IsRepoConfigured)
         {
             return UpdateInfo.Failed(
-                "尚未配置更新源。发布到 GitHub 后，把 UpdateService.RepoOwner " +
-                "改成你的用户名即可启用在线检查。");
+                "尚未配置更新源。请把 UpdateService.RepoOwner 与 RepoName " +
+                "改成实际的 GitHub 仓库后即可启用在线检查。");
         }
 
         try
