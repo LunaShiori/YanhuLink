@@ -113,6 +113,15 @@ jobs:
           # 本工作流跑得久，故在此**轮询等待** Android 的校验行出现
           # （最多约 4 分钟），拿到即合并；超时则退化为只含 Windows 两行，
           # 不会让步骤失败。
+          # 把任意换行（LF / CRLF）切成行，并丢掉空行与不含哈希的噪声行
+          function Get-SumLines([string]$body, [string[]]$allowed) {
+            if ([string]::IsNullOrEmpty($body)) { return @() }
+            @($body -split "`r?`n" |
+              ForEach-Object { $_.Trim() } |
+              Where-Object { $_ -match '^[0-9a-fA-F]{64}\s+\S+$' } |
+              Where-Object { $n = ($_ -split '\s+')[-1]; $allowed -contains $n })
+          }
+
           $prev = @()
           $releaseNames = @()
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
@@ -131,9 +140,7 @@ jobs:
                             -ErrorAction Stop
                   $body = if ($text -is [byte[]]) { [Text.Encoding]::UTF8.GetString($text) } else { [string]$text }
                   # 只保留「文件名确实存在于本次 Release」的行，避免旧版本残留
-                  $prev = @($body -split "`n" |
-                            Where-Object { $_ -match '[0-9a-f]{64}' } |
-                            Where-Object { $n = ($_ -split '\s+')[1]; $releaseNames -contains $n })
+                  $prev = Get-SumLines $body $releaseNames
                 }
                 # 已经拿到 Android 的行就不必再等
                 if ($prev | Where-Object { $_ -match 'android\.apk' }) { break }
@@ -144,10 +151,15 @@ jobs:
           }
 
           # 去掉与本次重复的行（按文件名去重），再做合并
-          $myNames = $mine | ForEach-Object { ($_ -split '\s+')[1] }
-          $kept = $prev | Where-Object { $n = ($_ -split '\s+')[1]; $myNames -notcontains $n }
+          $myNames = $mine | ForEach-Object { ($_ -split '\s+')[-1] }
+          $kept = $prev | Where-Object { $n = ($_ -split '\s+')[-1]; $myNames -notcontains $n }
 
-          ($kept + $mine) | Out-File -Encoding utf8 SHA256SUMS.txt
+          # 用 LF 逐行写出：避免 Windows 端 CRLF 与 Android 端 LF 混用
+          $all = @($kept + $mine)
+          [IO.File]::WriteAllText(
+            (Join-Path $PWD 'SHA256SUMS.txt'),
+            (($all -join "`n") + "`n"),
+            (New-Object Text.UTF8Encoding $false))
           Get-Content SHA256SUMS.txt
 
       - name: 上传构建产物

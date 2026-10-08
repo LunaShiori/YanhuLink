@@ -102,14 +102,14 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd out
-          sha256sum "YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk" \
-            > SHA256SUMS-Android.txt
-          cat SHA256SUMS-Android.txt
+          MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
+          sha256sum "$MINE_NAME" | sed 's/\r$//' > mine.txt
+          cat mine.txt
 
           # 先给出「只含 Android 一行」的兜底结果。
           # 下面与 Windows 工作流的合并属于「锦上添花」的 best-effort：
           # 任何一步失败都只影响行数，不能让整个 job 挂掉。
-          cp SHA256SUMS-Android.txt SHA256SUMS.txt
+          cp mine.txt SHA256SUMS.txt
 
           # Windows 工作流与本工作流并行，两边都会写 Release 的 SHA256SUMS.txt。
           # 各自只写自己的行会把对方覆盖掉，因此这里先把已有内容取回来合并。
@@ -126,7 +126,6 @@ jobs:
           set +e
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-            MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
 
             # 并行竞态：Windows 工作流跑得久，可能在本次执行时还没上传它那份。
             # 这里轮询等待（最多约 4 分钟）直到看到 Windows 的行，拿到即合并。
@@ -141,17 +140,22 @@ jobs:
 
               if [ -n "$ASSET_URL" ]; then
                 curl -sSL -H "Authorization: Bearer $GH_TOKEN" "$ASSET_URL" -o existing.txt 2>/dev/null
+                # 统一换行：线上文件可能是 CRLF，直接按行读会把 \r 带进文件名
+                tr -d '\r' < existing.txt > existing.lf 2>/dev/null
                 : > merged.txt
-                if [ -s existing.txt ]; then
+                if [ -s existing.lf ]; then
                   while IFS= read -r line; do
-                    echo "$line" | grep -qE '[0-9a-f]{64}' || continue
-                    fname=$(echo "$line" | awk '{print $2}')
-                    echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
-                  done < existing.txt
+                    printf '%s\n' "$line" | grep -qE '^[0-9a-fA-F]{64} +[^ ]+$' || continue
+                    fname=$(printf '%s\n' "$line" | awk '{print $NF}')
+                    printf '%s\n' "$RELEASE_NAMES" | grep -Fxq "$fname" && printf '%s\n' "$line" >> merged.txt
+                  done < existing.lf
                 fi
                 if [ -s merged.txt ]; then
                   grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null
-                  cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
+                  # 逐行写出：不能用 cat 拼接，否则上一段末行缺换行时两行会粘连
+                  : > SHA256SUMS.txt
+                  while IFS= read -r l; do printf '%s\n' "$l" >> SHA256SUMS.txt; done < merged2.txt
+                  while IFS= read -r l; do printf '%s\n' "$l" >> SHA256SUMS.txt; done < mine.txt
                 fi
                 # 已拿到 Windows 的行就收工
                 grep -qE 'Setup-x64\.exe|win-x64-portable\.zip' SHA256SUMS.txt 2>/dev/null && break
@@ -172,7 +176,7 @@ jobs:
           name: YanhuLink-android
           path: |
             out/*.apk
-            out/SHA256SUMS-Android.txt
+            out/SHA256SUMS.txt
 
       - name: 附加到 Release（仅 tag 触发）
         if: startsWith(github.ref, 'refs/tags/v')
@@ -180,7 +184,7 @@ jobs:
         with:
           files: |
             out/*.apk
-            out/SHA256SUMS-Android.txt
+            out/SHA256SUMS.txt
           # 与 Windows 工作流并行运行时，Release 可能已存在；
           # overwrite_files 保证重复上传不报错。
           overwrite_files: true
