@@ -71,7 +71,7 @@
                             <StackPanel Grid.Column="1" Spacing="2">
                                 <TextBlock Text="持续探测" FontSize="13.5" FontWeight="SemiBold" />
                                 <TextBlock Style="{StaticResource CaptionStyle}"
-                                           Text="按设定的间隔向认证服务器发送小数据包，测量延迟与丢包率。" />
+                                           Text="同时探测两个目标：校内认证服务器（判断认证是否生效）与公网地址（判断出口是否真的通）。" />
                             </StackPanel>
                         </Grid>
 
@@ -146,6 +146,7 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
 
                                 <StackPanel Grid.Column="0" Spacing="4" VerticalAlignment="Center">
@@ -187,6 +188,17 @@
                                                HorizontalAlignment="Center" />
                                     <TextBlock Text="实时下行" Style="{StaticResource MetricLabelStyle}"
                                                HorizontalAlignment="Center" />
+                                </StackPanel>
+
+                                <StackPanel Grid.Column="4" VerticalAlignment="Center"
+                                            HorizontalAlignment="Center" MinWidth="72">
+                                    <TextBlock x:Name="EgressText"
+                                               Text="{Binding EgressText}"
+                                               Style="{StaticResource MetricValueStyle}"
+                                               HorizontalAlignment="Center" />
+                                    <TextBlock Text="出口" Style="{StaticResource MetricLabelStyle}"
+                                               HorizontalAlignment="Center"
+                                               ToolTipService.ToolTip="{Binding EgressDetailText}" />
                                 </StackPanel>
                             </Grid>
                         </Border>
@@ -379,8 +391,8 @@
 
                             <StackPanel Spacing="4">
                                 <TextBlock Text="判定标准" FontSize="13" FontWeight="SemiBold" />
-                                <TextBlock Style="{StaticResource CaptionStyle}"
-                                           Text="延迟与丢包必须同时低于阈值，才算「校园网正常」。" />
+                                <TextBlock Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                                           Text="内网目标：延迟与丢包必须同时低于阈值，才算「校园网正常」。&#x0a;公网目标：只判断通与不通 —— 内网正常但公网不通，说明出口故障或被限速，同样视为异常并触发切换。" />
                             </StackPanel>
 
                             <Grid ColumnSpacing="14" RowSpacing="12">
@@ -415,6 +427,32 @@
                                            SpinButtonPlacementMode="Compact"
                                            Value="{Binding LossThresholdPercent, Mode=TwoWay}" />
                             </Grid>
+
+                            <StackPanel>
+                                <ToggleSwitch MinWidth="0"
+                                              Header="同时探测公网出口"
+                                              IsOn="{Binding ProbeTargetPublicEnabled, Mode=TwoWay}"
+                                              OnContent="已开启" OffContent="已关闭" />
+                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,-6,0,0"
+                                           TextWrapping="Wrap"
+                                           Text="开启后额外 ping 一个公网地址：能发现「认证正常、却打不开网页」的出口故障；切到热点后也能据此判断外网是否可用，无需再断网试探。个别校园网屏蔽 ICMP 出校时可关闭。" />
+                            </StackPanel>
+
+                            <StackPanel Visibility="{Binding ProbeTargetPublicEnabled, Converter={StaticResource BoolToVisibility}}">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="公网探测目标"
+                                               Style="{StaticResource FieldLabelStyle}" />
+                                    <TextBox Grid.Column="1" x:Name="PublicTargetBox"
+                                             PlaceholderText="www.baidu.com"
+                                             Text="{Binding ProbeTargetPublic, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                </Grid>
+                                <TextBlock Style="{StaticResource CaptionStyle}" Margin="0,4,0,0"
+                                           Text="填域名或 IP 均可。建议选国内可达性好的地址（如 www.baidu.com、223.5.5.5）。" />
+                            </StackPanel>
 
                             <StackPanel Spacing="4">
                                 <TextBlock Text="触发次数" FontSize="13" FontWeight="SemiBold" />

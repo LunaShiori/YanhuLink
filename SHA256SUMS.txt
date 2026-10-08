@@ -1,0 +1,2 @@
+9f35be0cbf51cfaa7e686375fff38f931664d7d4a34a09bef4f1004f72f39d01  YanhuLink-v2.2.0-win-x64-portable.zip
+76b037a5b89d410cb8a876aa224858c6f3d2dad78e8de74dea582ce923713f60  YanhuLink-Setup-x64.exe

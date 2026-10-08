@@ -84,9 +84,41 @@ public sealed class AppConfig
     [JsonPropertyName("failover_mode")]
     public FailoverMode FailoverMode { get; set; } = FailoverMode.RouteOnly;
 
-    /// <summary>探测目标（默认认证服务器，能反映校园网真实质量）。</summary>
+    /// <summary>
+    /// 内网探测目标（默认认证服务器）。
+    /// 用来判断「校园网账号是否已通过认证」——它在校内，只有认证成功后可达。
+    /// </summary>
     [JsonPropertyName("failover_probe_target")]
     public string FailoverProbeTarget { get; set; } = "172.18.1.6";
+
+    /// <summary>
+    /// 公网探测目标（默认百度）。
+    ///
+    /// 为什么必须再探一个公网目标：
+    ///   只 ping 认证服务器（内网）判断不出「出口是否真的通」。
+    ///   典型反例：认证通过、内网 1ms 完美响应，但学校出口带宽故障或被限速，
+    ///   此时打不开任何网页，而旧逻辑会认为「一切正常」，永远不会触发热备切换。
+    ///
+    /// 为什么选公网而不是继续用内网：
+    ///   热备切到手机热点后，校园内网地址**必然不可达**，
+    ///   于是旧逻辑只能每隔 1~5 分钟强行断一次热点、切回校园网试连（探回），
+    ///   这个试探过程本身就会让热点卡顿。改用公网目标后，
+    ///   在热点上依然能 ping 通，无需断网试探即可判断外网状态。
+    ///
+    /// 默认 www.baidu.com：国内可达性最好、ICMP 稳定、且对 ping 无限制。
+    /// </summary>
+    [JsonPropertyName("failover_probe_target_public")]
+    public string FailoverProbeTargetPublic { get; set; } = "www.baidu.com";
+
+    /// <summary>
+    /// 是否启用公网探测。
+    ///
+    /// 关闭后行为与旧版一致（只探内网）。保留开关是因为：
+    /// 个别校园网会屏蔽 ICMP 出校，此时公网 ping 恒为失败，
+    /// 强行判定会误报「外网不通」并触发无谓的热备切换。
+    /// </summary>
+    [JsonPropertyName("failover_probe_public_enabled")]
+    public bool FailoverProbePublicEnabled { get; set; } = true;
 
     /// <summary>
     /// 探测间隔（秒）。默认 5 秒。
@@ -97,10 +129,9 @@ public sealed class AppConfig
     ///   改成 5 秒后，最坏 15 秒内完成切换。
     ///
     /// 会不会被限流？不会：
-    ///   探测用 ICMP（ping），目标是校园内网的认证服务器，不出校门、不过运营商。
-    ///   每轮 3 个包 × 32 字节，5 秒一轮 ≈ 19 字节/秒 —— 比一条微信消息还小。
-    ///   认证服务器（Dr.COM eportal）只处理 HTTP 认证请求，对 ICMP 无感知，
-    ///   不存在「请求太频繁被封」的问题。
+    ///   内网目标用 ICMP（ping），3 个包 × 32 字节，不出校门。
+    ///   公网目标同样只发 3 个小包，5 秒一轮 ≈ 19 字节/秒 —— 比一条微信消息还小。
+    ///   百度等国内站点对 ICMP 无频率限制，不存在被封的问题。
     /// </summary>
     [JsonPropertyName("failover_probe_interval")]
     public int FailoverProbeInterval { get; set; } = 5;
@@ -215,6 +246,8 @@ public sealed class AppConfig
         FailoverEnabled = FailoverEnabled,
         FailoverMode = FailoverMode,
         FailoverProbeTarget = FailoverProbeTarget,
+        FailoverProbeTargetPublic = FailoverProbeTargetPublic,
+        FailoverProbePublicEnabled = FailoverProbePublicEnabled,
         FailoverProbeInterval = FailoverProbeInterval,
         FailoverProbeCount = FailoverProbeCount,
         FailoverLatencyThresholdMs = FailoverLatencyThresholdMs,

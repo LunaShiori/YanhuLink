@@ -7,11 +7,16 @@ namespace CampusNetLogin.Services;
 
 /// <summary>
 /// 网络质量探测服务。
-/// 使用 ICMP Ping 探测认证服务器（默认 172.18.1.6）的往返延迟与丢包率，
-/// 以此判断校园网是否「真正可用」——比单纯判断端口可达更严格，
-/// 能识别「连着但没网」的假连接状态。
 ///
-/// 同时提供当前活动网络接口的快照（含接口索引、跃点数、信号强度）。
+/// 默认同时探测两个目标（见 <see cref="ProbeDualAsync"/>）：
+///   · **内网**认证服务器（172.18.1.6）—— 判断认证是否生效
+///   · **公网**站点（www.baidu.com）  —— 判断出口是否真的通
+///
+/// 早先只探内网认证服务器，存在一个明显盲区：认证服务器在校内，
+/// 学校出口带宽故障或被限速时它照样 1ms 响应，程序会误判「一切正常」。
+/// 加入公网探测后，这类「内网通、外网死」的故障才能被发现并触发热备切换。
+///
+/// 另外提供当前活动网络接口的快照（含接口索引、跃点数、信号强度）。
 /// </summary>
 public sealed class NetworkProbeService
 {
@@ -142,6 +147,87 @@ public sealed class NetworkProbeService
         double latencyLimitMs = 300,
         double lossLimit = 0.5,
         CancellationToken ct = default,
+        double downBytesPerSec = -1,
+        double slowLimitBytesPerSec = 0)
+    {
+        return await ProbeCoreAsync(target, count, latencyLimitMs, lossLimit, ct,
+            downBytesPerSec, slowLimitBytesPerSec).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 双目标探测：同时判断「认证是否生效」与「出口是否真的通」。
+    ///
+    /// 为什么需要两个目标：
+    ///   只探内网（认证服务器）会漏掉「出口断了」这类故障 ——
+    ///   认证服务器在校内，出口带宽故障时它照样 1ms 响应，
+    ///   于是程序认为一切正常，永远不会触发热备切换。
+    ///
+    ///   只探公网则分不清「没认证」和「整个网络都断了」。
+    ///
+    /// 判定组合：
+    ///   内网通 + 公网通 → 一切正常
+    ///   内网通 + 公网不通 → 认证正常但出口故障（★ 旧版漏掉的场景）
+    ///   内网不通 + 公网通 → 不在校园网内（如已切到手机热点）
+    ///   内网不通 + 公网不通 → 彻底断网
+    /// </summary>
+    /// <param name="intranetTarget">内网目标（认证服务器）。</param>
+    /// <param name="publicTarget">公网目标（如 www.baidu.com）。为空或未启用则退化为单目标探测。</param>
+    public async Task<NetworkProbe> ProbeDualAsync(
+        string intranetTarget,
+        string? publicTarget,
+        int count = 3,
+        double latencyLimitMs = 300,
+        double lossLimit = 0.5,
+        CancellationToken ct = default,
+        double downBytesPerSec = -1,
+        double slowLimitBytesPerSec = 0)
+    {
+        // 内网探测（主判定）
+        var primary = await ProbeCoreAsync(intranetTarget, count, latencyLimitMs, lossLimit, ct,
+            downBytesPerSec, slowLimitBytesPerSec).ConfigureAwait(false);
+
+        // 未启用公网目标 → 直接返回，行为与旧版一致
+        if (string.IsNullOrWhiteSpace(publicTarget))
+            return primary;
+
+        // 公网探测只取「通不通」，不参与延迟/丢包的健康判定 ——
+        // 公网 RTT 天然比内网高一个数量级，用同一个阈值判定会误杀。
+        var pub = await ProbeCoreAsync(publicTarget, count,
+            latencyLimitMs: 3000, lossLimit: lossLimit, ct)
+            .ConfigureAwait(false);
+
+        bool internetOk = pub.Success;
+        // 「认证通、出口不通」：内网确实有回包，但公网完全没回包
+        bool egressBlocked = primary.Success && !internetOk;
+
+        string reason = primary.Reason;
+        bool healthy = primary.IsHealthy;
+
+        if (egressBlocked)
+        {
+            healthy = false;
+            reason = $"内网正常但外网不通（出口故障或被限速），{pub.Reason}";
+        }
+
+        return primary with
+        {
+            PublicProbe = pub,
+            InternetReachable = internetOk,
+            IsEgressBlocked = egressBlocked,
+            IsHealthy = healthy,
+            Reason = reason,
+        };
+    }
+
+    /// <summary>
+    /// 单目标探测的实际实现（公共部分）。
+    /// </summary>
+    private async Task<NetworkProbe> ProbeCoreAsync(
+        string target,
+        int count,
+        double latencyLimitMs,
+        double lossLimit,
+        CancellationToken ct,
         double downBytesPerSec = -1,
         double slowLimitBytesPerSec = 0)
     {

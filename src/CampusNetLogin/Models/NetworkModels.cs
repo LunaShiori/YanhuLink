@@ -124,6 +124,32 @@ public sealed record NetworkProbe
     /// <summary>速率是否低于阈值（仅在测过速且配置了阈值时有意义）。</summary>
     public bool IsSlow { get; init; }
 
+    // ------------------------------------------------------------------
+    // 双目标探测结果
+    //
+    // 单探一个目标判断不出「网络到底哪里坏了」。所以拆成两个独立维度：
+    //   · 内网目标（认证服务器）→ 认证是否生效
+    //   · 公网目标（如百度）    → 出口是否真的通
+    // 两者组合才能区分「没认证」「认证了但出口断了」「彻底断网」三种情况。
+    // ------------------------------------------------------------------
+
+    /// <summary>公网目标的探测结果。未启用公网探测时为 null。</summary>
+    public NetworkProbe? PublicProbe { get; init; }
+
+    /// <summary>
+    /// 出口是否通畅（公网目标可达）。
+    /// 未启用公网探测时恒为 true —— 即退化成旧版「只看内网」的行为。
+    /// </summary>
+    public bool InternetReachable { get; init; } = true;
+
+    /// <summary>
+    /// 是否存在「认证正常但出口不通」的情况。
+    ///
+    /// 这是旧版探测**完全无法发现**的故障：
+    /// 内网 ping 完美（1ms），但学校出口故障/被限速，实际什么都打不开。
+    /// </summary>
+    public bool IsEgressBlocked { get; init; }
+
     public static NetworkProbe Failed(string target, string reason) => new()
     {
         Target = target,

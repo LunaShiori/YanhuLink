@@ -16,7 +16,7 @@
 
 #define MyAppName "砚湖连"
 #define MyAppNameEn "YanhuLink"
-#define MyAppVersion "2.1.0"
+#define MyAppVersion "2.2.0"
 #define MyAppPublisher "扬州职业技术大学高邮湖校区"
 #define MyAppURL "https://github.com/LunaShiori/YanhuLink"
 #define MyAppExeName "CampusNetLogin.exe"

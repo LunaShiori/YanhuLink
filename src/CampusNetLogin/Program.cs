@@ -166,7 +166,10 @@ public static class Program
                 Cli();
                 Cli("=== 热备配置 ===");
                 Cli($"启用    : {(cfg.FailoverEnabled ? "是" : "否")}");
-                Cli($"探测目标: {cfg.FailoverProbeTarget}");
+                Cli($"内网目标: {cfg.FailoverProbeTarget}  （判断认证是否生效）");
+                Cli(cfg.FailoverProbePublicEnabled
+                    ? $"公网目标: {cfg.FailoverProbeTargetPublic}  （判断出口是否真的通）"
+                    : "公网目标: （未启用，仅判断内网）");
                 Cli($"管理员  : {(ElevationService.IsElevated() ? "是" : "否（无法自动切换）")}");
                 var enabled = cfg.FailoverBackups.Where(b => b.Enabled).ToList();
                 Cli($"备用网络: {(enabled.Count == 0 ? "（未配置）" : string.Join(" → ", enabled.Select(b => b.Ssid)))}");
@@ -177,14 +180,32 @@ public static class Program
             if (lower.Contains("--probe"))
             {
                 var probe = new NetworkProbeService();
-                var r = probe.ProbeAsync(cfg.FailoverProbeTarget,
+                string? publicTarget = cfg.FailoverProbePublicEnabled &&
+                                       !string.IsNullOrWhiteSpace(cfg.FailoverProbeTargetPublic)
+                    ? cfg.FailoverProbeTargetPublic.Trim()
+                    : null;
+
+                var r = probe.ProbeDualAsync(cfg.FailoverProbeTarget,
+                    publicTarget,
                     cfg.FailoverProbeCount,
                     cfg.FailoverLatencyThresholdMs,
                     cfg.FailoverLossThreshold).GetAwaiter().GetResult();
 
-                Cli($"PROBE: 目标={r.Target}");
+                Cli($"PROBE: 内网目标={r.Target}");
                 Cli($"  发送={r.Sent} 收到={r.Received} 延迟={(r.Success ? $"{r.LatencyMs:F0}ms" : "—")} 丢包={r.LossRate:P0}");
                 Cli($"  判定: {(r.IsHealthy ? "正常" : "异常")}  ({r.Reason})");
+
+                if (r.PublicProbe is { } pub)
+                {
+                    Cli();
+                    Cli($"PROBE: 公网目标={pub.Target}");
+                    Cli($"  发送={pub.Sent} 收到={pub.Received} 延迟={(pub.Success ? $"{pub.LatencyMs:F0}ms" : "—")}");
+                    if (r.IsEgressBlocked)
+                        Cli("  出口: 不通 —— 内网正常但公网不可达（出口故障或被限速）");
+                    else
+                        Cli($"  出口: {(r.InternetReachable ? "正常" : "不通")}");
+                }
+
                 return r.IsHealthy ? 0 : 1;
             }
 

@@ -46,8 +46,14 @@ public sealed class FailoverService : IDisposable
     // 这种情况下备用热点与校园网共用同一块无线网卡，切换本质上是
     // 「换个 SSID 关联」，而不是改路由优先级。由此带来两个必须单独处理的点：
     //   · 不能在启动时预热（预热等于先把校园网断开）
-    //   · 切到备用后探测目标（校园网内网地址）必然不可达，
-    //     必须周期性切回去试连，否则永远判定不了「校园网已恢复」
+    //   · 切到备用后探测内网目标必然不可达，需要判断「这是正常切走还是校园网真挂了」
+    //
+    // ★ 第二点的判断现在靠**公网探测**直接解决：
+    //   公网可达 → 说明链路本身没问题，内网不可达只是因为已经切走了 → 不必探回
+    //   公网也不可达 → 才需要主动切回校园网试连确认（探回）
+    //
+    //   旧版没有公网目标，只能无论青红皂白地周期性探回，
+    //   导致使用手机热点时每隔 1~5 分钟就卡顿一次。
     // ------------------------------------------------------------------
 
     /// <summary>切换前主用无线网络的 SSID（仅主用为无线时有效）。</summary>
@@ -329,8 +335,9 @@ public sealed class FailoverService : IDisposable
                     ? cfg.SpeedSlowThresholdKbps * 1024.0
                     : 0;
 
-                var probe = await _probe.ProbeAsync(
+                var probe = await _probe.ProbeDualAsync(
                     cfg.FailoverProbeTarget,
+                    PublicTargetOf(cfg),
                     probeCount,
                     cfg.FailoverLatencyThresholdMs,
                     cfg.FailoverLossThreshold,
@@ -468,12 +475,35 @@ public sealed class FailoverService : IDisposable
             return;
         }
 
-        // 探测不健康。注意这里有歧义：既可能是校园网真的坏了，
-        // 也可能只是「我们已经不在校园网上了」——后者在无线主用场景下必然发生，
-        // 因为网卡已经关联到备用热点，校园网内网地址根本不可达。
-        // 所以必须周期性切回去实测一次，否则永远等不到「已恢复」，也就永远切不回来。
+        // 探测不健康。这里要区分两种完全不同的情况：
+        //
+        //  ① 校园网真的坏了 → 应继续留在备用网络
+        //  ② 我们只是「已经不在校园网上了」→ 这是正常的，也不该急着切回
+        //
+        // ★ 公网探测让这个歧义可以被直接解开：
+        //   如果公网目标可达，说明当前链路（备用热点）本身是好的，
+        //   那么「内网不可达」只可能是「我们已经不在校园网上了」，
+        //   而不是「校园网坏了」。
+        //
+        // 旧版没有公网目标，只能每隔 1~5 分钟**强行断一次备用热点、
+        // 切回校园网 SSID 试连**（探回），这个试探动作本身就会让热点卡顿。
+        // 现在只在「公网也不通、且主用是无线」这种真正需要确认的情况下才探回。
         ConsecutiveHealthy = 0;
 
+        bool internetOk = probe.InternetReachable;
+
+        // 公网通 → 备用网络工作正常，内网不可达是「已切走」的必然结果，
+        // 无需探回，静待用户/时机切回即可。
+        if (internetOk)
+        {
+            SetState(FailoverState.OnBackup);
+            await Task.CompletedTask.ConfigureAwait(false);
+            return;
+        }
+
+        // 公网也不通：此时可能是备用网络本身有问题，或校园网已恢复但还没切回。
+        // 只有主用为无线（与备用共用网卡）时才需要探回确认 ——
+        // 因为有线场景下插入网线即可自动恢复，不需要主动断网试探。
         if (_sharedWlanAdapter &&
             !string.IsNullOrWhiteSpace(_primarySsid) &&
             DateTime.UtcNow - _lastRecoveryProbeUtc >=
@@ -511,8 +541,9 @@ public sealed class FailoverService : IDisposable
             return false;
         }
 
-        var probe = await _probe.ProbeAsync(
+        var probe = await _probe.ProbeDualAsync(
             cfg.FailoverProbeTarget,
+            PublicTargetOf(cfg),
             Math.Clamp(cfg.FailoverProbeCount, 1, 6),
             cfg.FailoverLatencyThresholdMs,
             cfg.FailoverLossThreshold,
@@ -805,12 +836,21 @@ public sealed class FailoverService : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// 取出生效的公网探测目标。未启用或未配置时返回 null（退化为只看内网）。
+    /// </summary>
+    private static string? PublicTargetOf(AppConfig cfg)
+        => cfg.FailoverProbePublicEnabled && !string.IsNullOrWhiteSpace(cfg.FailoverProbeTargetPublic)
+            ? cfg.FailoverProbeTargetPublic.Trim()
+            : null;
+
     /// <summary>立即执行一次探测并返回结果（供界面「立即测速」使用）。</summary>
     public async Task<NetworkProbe> ProbeNowAsync()
     {
         var cfg = _configService.Load();
-        var probe = await _probe.ProbeAsync(
+        var probe = await _probe.ProbeDualAsync(
             cfg.FailoverProbeTarget,
+            PublicTargetOf(cfg),
             Math.Clamp(cfg.FailoverProbeCount, 1, 6),
             cfg.FailoverLatencyThresholdMs,
             cfg.FailoverLossThreshold,
@@ -864,6 +904,9 @@ public sealed class FailoverService : IDisposable
                 PrimarySsid = _primarySsid,
                 SharedWlanAdapter = _sharedWlanAdapter,
                 RecoveryProbeSeconds = _recoveryProbeIntervalSeconds,
+                InternetReachable = LastPrimaryProbe?.InternetReachable ?? true,
+                IsEgressBlocked = LastPrimaryProbe?.IsEgressBlocked ?? false,
+                PublicTarget = PublicTargetOf(cfg) ?? string.Empty,
             });
         }
         catch { /* ignore */ }
@@ -894,6 +937,19 @@ public sealed record FailoverSnapshot
     public FailoverState State { get; init; }
     public NetworkProbe? Probe { get; init; }
     public ActiveNetworkInfo? Network { get; init; }
+
+    /// <summary>
+    /// 出口（公网）是否通畅。
+    /// 与 <see cref="Probe"/> 的内网结果组合，可区分
+    /// 「没认证」「认证了但出口断了」「彻底断网」三种情况。
+    /// </summary>
+    public bool InternetReachable { get; init; } = true;
+
+    /// <summary>是否处于「内网正常但外网不通」的出口故障状态。</summary>
+    public bool IsEgressBlocked { get; init; }
+
+    /// <summary>当前生效的公网探测目标（未启用时为空）。</summary>
+    public string PublicTarget { get; init; } = string.Empty;
 
     /// <summary>当前承载流量的备用网络名（未切换时为空）。</summary>
     public string BackupSsid { get; init; } = string.Empty;

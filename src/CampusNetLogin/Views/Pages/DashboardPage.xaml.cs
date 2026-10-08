@@ -186,23 +186,41 @@ public sealed partial class DashboardPage : Page
 
         if (show)
         {
-            (FailoverCardTitle.Text, FailoverCardDetail.Text, FailoverCardIcon.Glyph) =
-                snap.State switch
-                {
-                    FailoverState.MonitoringPrimary =>
-                        ("网络热备运行中", "正在持续监测校园网质量，一切正常", "\uE7F4"),
-                    FailoverState.OnBackup =>
-                        ($"正在使用备用网络「{snap.BackupSsid}」",
-                         snap.TakeoverActive ? "校园网恢复后会自动切回" : "未取得管理员权限，可能未真正接管出口",
-                         "\uE7BA"),
-                    FailoverState.SwitchingToBackup =>
-                        ("正在切换到备用网络", "识别到校园网异常，正在应急切换…", "\uE895"),
-                    FailoverState.SwitchingBack =>
-                        ("正在切回校园网", "校园网已恢复正常，正在恢复优先路由…", "\uE895"),
-                    FailoverState.Error =>
-                        ("备用网络连接失败", "请检查热点是否开启、密码是否正确", "\uEA39"),
-                    _ => ("网络热备", string.Empty, "\uE7F4"),
-                };
+            // 「出口不通」优先级最高 —— 这是旧版完全无法发现的故障类型
+            if (snap.IsEgressBlocked)
+            {
+                (FailoverCardTitle.Text, FailoverCardDetail.Text, FailoverCardIcon.Glyph) =
+                    ("外网出口不通",
+                     $"内网可达但 {snap.PublicTarget} 无法访问，疑似出口故障或被限速",
+                     "\uEA39");
+            }
+            else if (!snap.InternetReachable)
+            {
+                (FailoverCardTitle.Text, FailoverCardDetail.Text, FailoverCardIcon.Glyph) =
+                    ("外网出口不通",
+                     $"公网目标 {snap.PublicTarget} 无法访问",
+                     "\uEA39");
+            }
+            else
+            {
+                (FailoverCardTitle.Text, FailoverCardDetail.Text, FailoverCardIcon.Glyph) =
+                    snap.State switch
+                    {
+                        FailoverState.MonitoringPrimary =>
+                            ("网络热备运行中", "正在持续监测校园网质量，一切正常", "\uE7F4"),
+                        FailoverState.OnBackup =>
+                            ($"正在使用备用网络「{snap.BackupSsid}」",
+                             snap.TakeoverActive ? "校园网恢复后会自动切回" : "未取得管理员权限，可能未真正接管出口",
+                             "\uE7BA"),
+                        FailoverState.SwitchingToBackup =>
+                            ("正在切换到备用网络", "识别到校园网异常，正在应急切换…", "\uE895"),
+                        FailoverState.SwitchingBack =>
+                            ("正在切回校园网", "校园网已恢复正常，正在恢复优先路由…", "\uE895"),
+                        FailoverState.Error =>
+                            ("备用网络连接失败", "请检查热点是否开启、密码是否正确", "\uEA39"),
+                        _ => ("网络热备", string.Empty, "\uE7F4"),
+                    };
+            }
         }
     }
 

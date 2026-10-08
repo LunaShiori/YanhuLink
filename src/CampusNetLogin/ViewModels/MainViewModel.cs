@@ -237,6 +237,28 @@ public sealed class MainViewModel : INotifyPropertyChanged
         }
     }
 
+    private string _probeTargetPublic = "www.baidu.com";
+    /// <summary>
+    /// 公网探测目标（默认百度）。
+    /// 与内网目标配合使用：内网判「认证是否生效」，公网判「出口是否真的通」。
+    /// </summary>
+    public string ProbeTargetPublic
+    {
+        get => _probeTargetPublic;
+        set => Set(ref _probeTargetPublic, value ?? string.Empty);
+    }
+
+    private bool _probeTargetPublicEnabled = true;
+    /// <summary>
+    /// 是否启用公网探测。
+    /// 个别校园网屏蔽 ICMP 出校时公网 ping 恒失败，可关闭以退化为只看内网。
+    /// </summary>
+    public bool ProbeTargetPublicEnabled
+    {
+        get => _probeTargetPublicEnabled;
+        set => Set(ref _probeTargetPublicEnabled, value);
+    }
+
     private double _latencyThreshold = 300;
     public double LatencyThreshold
     {
@@ -377,6 +399,48 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         get => _wlanAvailable;
         private set => Set(ref _wlanAvailable, value);
+    }
+
+    // ---- 出口（公网）状态 ----
+
+    private bool _internetReachable = true;
+    /// <summary>出口（公网）是否通畅。未启用公网探测时恒为 true。</summary>
+    public bool InternetReachable
+    {
+        get => _internetReachable;
+        private set => Set(ref _internetReachable, value);
+    }
+
+    private bool _isEgressBlocked;
+    /// <summary>是否处于「内网正常但外网不通」的出口故障状态。</summary>
+    public bool IsEgressBlocked
+    {
+        get => _isEgressBlocked;
+        private set => Set(ref _isEgressBlocked, value);
+    }
+
+    private string _publicTarget = string.Empty;
+    /// <summary>当前生效的公网探测目标（未启用时为空）。</summary>
+    public string PublicTarget
+    {
+        get => _publicTarget;
+        private set => Set(ref _publicTarget, value);
+    }
+
+    private string _egressText = "出口正常";
+    /// <summary>出口状态文案，如「出口正常」「出口不通」。</summary>
+    public string EgressText
+    {
+        get => _egressText;
+        private set => Set(ref _egressText, value);
+    }
+
+    private string _egressDetailText = string.Empty;
+    /// <summary>出口状态补充说明（含探测目标）。</summary>
+    public string EgressDetailText
+    {
+        get => _egressDetailText;
+        private set => Set(ref _egressDetailText, value);
     }
 
     // ==================================================================
@@ -687,6 +751,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // 网络热备
         FailoverEnabled = c.FailoverEnabled;
         ProbeInterval = c.FailoverProbeInterval;
+        ProbeTargetPublic = c.FailoverProbeTargetPublic;
+        ProbeTargetPublicEnabled = c.FailoverProbePublicEnabled;
         LatencyThreshold = c.FailoverLatencyThresholdMs;
         LossThresholdPercent = Math.Round(c.FailoverLossThreshold * 100);
         FailureThreshold = c.FailoverFailureThreshold;
@@ -738,6 +804,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
         // 网络热备
         c.FailoverEnabled = FailoverEnabled;
         c.FailoverProbeInterval = (int)Math.Clamp(ProbeInterval, 5, 600);
+        c.FailoverProbeTargetPublic = string.IsNullOrWhiteSpace(ProbeTargetPublic)
+            ? "www.baidu.com"
+            : ProbeTargetPublic.Trim();
+        c.FailoverProbePublicEnabled = ProbeTargetPublicEnabled;
         c.FailoverLatencyThresholdMs = Math.Clamp(LatencyThreshold, 20, 5000);
         c.FailoverLossThreshold = Math.Clamp(LossThresholdPercent / 100.0, 0, 1);
         c.FailoverFailureThreshold = (int)Math.Clamp(FailureThreshold, 1, 20);
@@ -933,6 +1003,32 @@ public sealed class MainViewModel : INotifyPropertyChanged
             {
                 LastLatencyText = p.Success ? $"{p.LatencyMs:F0} ms" : "超时";
                 LastLossText = $"{p.LossRate:P0}";
+
+                // 双目标：公网侧结果来自同一个探测记录
+                InternetReachable = p.InternetReachable;
+                IsEgressBlocked = p.IsEgressBlocked;
+            }
+
+            PublicTarget = snap.PublicTarget;
+            if (string.IsNullOrEmpty(snap.PublicTarget))
+            {
+                EgressText = "仅内网";
+                EgressDetailText = "未启用公网探测，只判断认证是否生效";
+            }
+            else if (IsEgressBlocked)
+            {
+                EgressText = "出口不通";
+                EgressDetailText = $"内网正常但 {snap.PublicTarget} 不可达，疑似出口故障或被限速";
+            }
+            else if (!InternetReachable)
+            {
+                EgressText = "出口不通";
+                EgressDetailText = $"{snap.PublicTarget} 不可达";
+            }
+            else
+            {
+                EgressText = "出口正常";
+                EgressDetailText = $"公网目标 {snap.PublicTarget} 可达";
             }
 
             FailoverHint = BuildFailoverHint(snap);
@@ -950,11 +1046,15 @@ public sealed class MainViewModel : INotifyPropertyChanged
         return snap.State switch
         {
             FailoverState.Disabled => "开启后将在校园网故障时自动切换备用网络",
+            FailoverState.MonitoringPrimary when snap.IsEgressBlocked
+                => $"内网正常但外网不通（出口故障或被限速）{snap.ConsecutiveFailures}/{snap.FailureNeeded}，即将切换备用网络",
             FailoverState.MonitoringPrimary when snap.Probe is { IsHealthy: true }
                 => $"校园网正常（{snap.Probe.Reason}）",
             FailoverState.MonitoringPrimary
                 => $"校园网异常 {snap.ConsecutiveFailures}/{snap.FailureNeeded}：{snap.Probe?.Reason}",
             FailoverState.SwitchingToBackup => "正在连接备用网络并调整路由…",
+            FailoverState.OnBackup when !snap.InternetReachable
+                => $"备用网络「{snap.BackupSsid}」已连接，但其出口也不通，请检查热点数据网络",
             FailoverState.OnBackup when snap.Probe is { IsHealthy: true }
                 => $"校园网恢复中 {snap.ConsecutiveHealthy}/{snap.RecoveryNeeded}，恢复后自动切回",
             FailoverState.OnBackup => $"当前使用备用网络「{snap.BackupSsid}」",
@@ -993,6 +1093,17 @@ public sealed class MainViewModel : INotifyPropertyChanged
             _log.Success($"校园网检测：{probe.Reason}，{(probe.IsHealthy ? "状态正常" : "未达健康标准")}");
         else
             _log.Error($"校园网检测失败：{probe.Reason}");
+
+        // 双目标：单独汇报出口状态，避免「内网正常但打不开网页」被误判为一切正常
+        if (probe.PublicProbe is not null)
+        {
+            if (probe.IsEgressBlocked)
+                _log.Error($"出口异常：内网可达但公网不通（{probe.PublicProbe.Reason}）");
+            else if (probe.InternetReachable)
+                _log.Info("出口正常：公网目标可达");
+            else
+                _log.Error($"出口异常：公网目标不可达（{probe.PublicProbe.Reason}）");
+        }
         return probe;
     }
 

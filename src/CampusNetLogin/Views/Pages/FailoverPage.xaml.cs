@@ -104,8 +104,18 @@ public sealed partial class FailoverPage : Page
             SharedAdapterBar.Message =
                 "备用热点和校园网共用同一块无线网卡，所以切换方式是「换个 WiFi 连接」，" +
                 "切换瞬间会有几秒断网。\n" +
-                "切到备用后，程序会每隔 1 分钟（连续失败后逐步放长到 5 分钟）切回校园网试探一次，" +
-                "一旦校园网恢复就立刻切回。";
+                (string.IsNullOrEmpty(snap.PublicTarget)
+                    ? "切到备用后，程序会每隔 1 分钟切回校园网试探一次，一旦校园网恢复就立刻切回。（开启「同时探测公网出口」可免去这种断网试探）"
+                    : "切到备用后，只要公网出口仍然可达即视为备用网络工作正常，不会再断网试探；" +
+                      "只有出口本身也不通时，程序才会周期性切回校园网确认是否已恢复。");
+        }
+
+        // 出口状态着色：出口不通时用告警色，正常时为常规色
+        if (Application.Current.Resources["FailoverErrorBrush"] is Brush errBrush &&
+            Application.Current.Resources["TextFillColorPrimaryBrush"] is Brush okBrush)
+        {
+            EgressText.Foreground = (snap.IsEgressBlocked || !snap.InternetReachable)
+                ? errBrush : okBrush;
         }
 
         // 未启用时展示介绍卡

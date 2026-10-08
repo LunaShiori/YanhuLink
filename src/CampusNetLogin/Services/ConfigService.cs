@@ -121,6 +121,11 @@ public sealed class ConfigService
         if (string.IsNullOrWhiteSpace(cfg.FailoverProbeTarget))
             cfg.FailoverProbeTarget = string.IsNullOrWhiteSpace(cfg.Portal) ? "172.18.1.6" : cfg.Portal;
 
+        // 公网探测目标：老配置文件里没有这个键，反序列化后是 null（或空串），
+        // 这里补上默认值，保证升级用户也能拿到「出口通不通」的判断能力。
+        if (string.IsNullOrWhiteSpace(cfg.FailoverProbeTargetPublic))
+            cfg.FailoverProbeTargetPublic = "www.baidu.com";
+
         cfg.FailoverProbeInterval = Math.Clamp(cfg.FailoverProbeInterval, 5, 600);
         cfg.FailoverProbeCount = Math.Clamp(cfg.FailoverProbeCount, 1, 6);
 
