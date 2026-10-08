@@ -1,0 +1,37 @@
+# 统一行尾符，避免 Windows / macOS / Linux 协作者之间产生无意义的整文件 diff
+#
+# 背景：Windows 上 Git 默认 core.autocrlf=true，会在提交时把 LF 转成 CRLF，
+# 导致同一份文件在不同机器上产生不同的 blob SHA，进而出现「内容一样却推不上去」
+# 的 non-fast-forward 冲突。
+#
+# 规则：仓库内一律以 LF 存储（text=auto 负责检出时按平台转换）；
+#       明确标记为二进制的文件不做任何转换。
+
+* text=auto eol=lf
+
+# ---- 明确指定为二进制，禁止行尾转换 ----
+*.ico   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.zip   binary
+*.exe   binary
+*.dll   binary
+*.pdb   binary
+*.pfx   binary
+
+# ---- 明确指定为文本（即使含特殊字符也按文本处理）----
+*.cs    text diff=csharp
+*.xaml  text
+*.xml   text
+*.csproj text
+*.sln   text
+*.yml   text
+*.yaml  text
+*.md    text
+*.iss   text
+*.cmd   text
+*.ps1   text
+*.py    text
+*.json  text
