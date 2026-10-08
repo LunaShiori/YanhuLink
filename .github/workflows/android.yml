@@ -98,77 +98,18 @@ jobs:
 
       - name: 计算校验和
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd out
           MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
-          sha256sum "$MINE_NAME" | sed 's/\r$//' > mine.txt
-          cat mine.txt
-
-          # 先给出「只含 Android 一行」的兜底结果。
-          # 下面与 Windows 工作流的合并属于「锦上添花」的 best-effort：
-          # 任何一步失败都只影响行数，不能让整个 job 挂掉。
-          cp mine.txt SHA256SUMS.txt
-
-          # Windows 工作流与本工作流并行，两边都会写 Release 的 SHA256SUMS.txt。
-          # 各自只写自己的行会把对方覆盖掉，因此这里先把已有内容取回来合并。
-          #
-          # 注意：必须从 **Release 附件** 取，不能用
-          #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
-          # 后者读的是仓库里提交过的文件，可能残留上一版本的旧哈希
-          # （v2.3.0 曾误带进 v2.2.0 的行）。合并时只保留
-          # 「文件名确实在本次 Release 里」的行。
-          #
-          # 本段整体用 `set +e` 包裹：GitHub Actions 默认给 run 加了
-          # `-e -o pipefail`，而 grep 在「无匹配」时返回 1 属于正常分支，
-          # 不加保护会直接中断步骤（此前即因此失败）。
-          set +e
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            TAG="${GITHUB_REF#refs/tags/}"
-
-            # 并行竞态：Windows 工作流跑得久，可能在本次执行时还没上传它那份。
-            # 这里轮询等待（最多约 4 分钟）直到看到 Windows 的行，拿到即合并。
-            DEADLINE=$(( $(date +%s) + 240 ))
-            while :; do
-              REL_JSON=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                   "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null)
-              RELEASE_NAMES=$(printf '%s' "$REL_JSON" | grep -o '"name": *"[^"]*"' | sed 's/.*"name": *"//; s/"$//')
-              ASSET_URL=$(printf '%s' "$REL_JSON" | tr '{},' '\n\n\n' \
-                          | grep -o '"browser_download_url": *"[^"]*SHA256SUMS\.txt"' \
-                          | head -1 | sed 's/.*"browser_download_url": *"//; s/"$//')
-
-              if [ -n "$ASSET_URL" ]; then
-                curl -sSL -H "Authorization: Bearer $GH_TOKEN" "$ASSET_URL" -o existing.txt 2>/dev/null
-                # 统一换行：线上文件可能是 CRLF，直接按行读会把 \r 带进文件名
-                tr -d '\r' < existing.txt > existing.lf 2>/dev/null
-                : > merged.txt
-                if [ -s existing.lf ]; then
-                  while IFS= read -r line; do
-                    printf '%s\n' "$line" | grep -qE '^[0-9a-fA-F]{64} +[^ ]+$' || continue
-                    fname=$(printf '%s\n' "$line" | awk '{print $NF}')
-                    printf '%s\n' "$RELEASE_NAMES" | grep -Fxq "$fname" && printf '%s\n' "$line" >> merged.txt
-                  done < existing.lf
-                fi
-                if [ -s merged.txt ]; then
-                  grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null
-                  # 逐行写出：不能用 cat 拼接，否则上一段末行缺换行时两行会粘连
-                  : > SHA256SUMS.txt
-                  while IFS= read -r l; do printf '%s\n' "$l" >> SHA256SUMS.txt; done < merged2.txt
-                  while IFS= read -r l; do printf '%s\n' "$l" >> SHA256SUMS.txt; done < mine.txt
-                fi
-                # 已拿到 Windows 的行就收工
-                grep -qE 'Setup-x64\.exe|win-x64-portable\.zip' SHA256SUMS.txt 2>/dev/null && break
-              fi
-              [ "$(date +%s)" -ge "$DEADLINE" ] && break
-              sleep 15
-            done
-            echo "release assets:"; printf '%s\n' "$RELEASE_NAMES"
-          fi
-          set -e
-
-          echo "--- 最终 SHA256SUMS.txt ---"
+          sha256sum "$MINE_NAME" | sed 's/\r$//' > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+          # 说明：Release 上的 SHA256SUMS.txt 由 **Windows 工作流独家写入**：
+          # 它会在等待 APK 附件出现后自行下载并计算哈希，从而得到完整三行。
+          # 本工作流只负责把 APK 传上 Release，不再写 Release 的校验和文件，
+          # 从根本上消除「两个工作流并行写同一文件」导致的覆盖与粘行问题。
+          # 这里的 out/SHA256SUMS.txt 仅随构建产物（artifact）归档，供单独下载核对，
+          # **不会**作为 Release 附件上传。
 
       - name: 上传构建产物
         uses: actions/upload-artifact@v4
@@ -182,9 +123,10 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
+          # 只上传 APK。SHA256SUMS.txt 由 Windows 工作流独家写入 Release，
+          # 这里若一并上传就会与它抢同一个附件名，重新引入竞态。
           files: |
             out/*.apk
-            out/SHA256SUMS.txt
           # 与 Windows 工作流并行运行时，Release 可能已存在；
           # overwrite_files 保证重复上传不报错。
           overwrite_files: true

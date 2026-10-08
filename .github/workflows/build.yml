@@ -94,78 +94,56 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 先生成本工作流自己的两行
-          $mine = @()
-          $mine += (Get-FileHash "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" -Algorithm SHA256 |
-                    ForEach-Object { "$($_.Hash)  YanhuLink-v$env:APP_VERSION-win-x64-portable.zip" })
-          $mine += (Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256 |
-                    ForEach-Object { "$($_.Hash)  YanhuLink-Setup-x64.exe" })
+          # 设计：SHA256SUMS.txt 只由本工作流独家写入，Android 工作流不再写它。
+          # 单一写入方 → 不存在相互覆盖与并行竞态，也不会有换行/粘行问题。
+          #
+          # 本工作流自己产出的两个文件就地取哈希；
+          # Android 的 APK 由对方上传到 Release，这里等它出现后下载并计算哈希。
+          #
+          # 注意：本步骤只在 tag 触发时需要完整三行；其他分支退化为本地两行。
+          $lines = [System.Collections.Generic.List[string]]::new()
 
-          # Android 工作流与本工作流并行，都会写 Release 上的 SHA256SUMS.txt。
-          # 直接整体覆盖会把 Android 的行冲掉，所以先取回已有内容并合并。
-          #
-          # 注意：必须从 **Release 附件** 取，不能用
-          #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
-          # 后者读的是仓库里 **提交过的文件**，可能残留上一个版本的旧哈希，
-          # 合并后会污染校验文件（此前 v2.3.0 就误带进了 v2.2.0 的行）。
-          #
-          # 并行竞态：谁先跑完谁先 upload，后跑的才看得到对方的行。
-          # 本工作流跑得久，故在此**轮询等待** Android 的校验行出现
-          # （最多约 4 分钟），拿到即合并；超时则退化为只含 Windows 两行，
-          # 不会让步骤失败。
-          # 把任意换行（LF / CRLF）切成行，并丢掉空行与不含哈希的噪声行。
-          #
-          # 注意：这里**不能**用 \s+ 作为「哈希与文件名之间的分隔符」，
-          # 因为 \s 会匹配换行符——当上游附件是「多行被粘成一行」时，
-          # 整份内容会被当成一条合法记录保留下来，粘行就永久传下去。
-          # 因此分隔符严格限定为 空格/制表符。
-          function Get-SumLines([string]$body, [string[]]$allowed) {
-            if ([string]::IsNullOrEmpty($body)) { return @() }
-            @($body -split "`r?`n" |
-              ForEach-Object { $_.Trim() } |
-              Where-Object { $_ -match '^[0-9a-fA-F]{64}[ \t]+[^ \t]+$' } |
-              Where-Object { $n = ($_ -split '[ \t]+')[-1]; $allowed -contains $n })
-          }
+          $zipName = "YanhuLink-v$env:APP_VERSION-win-x64-portable.zip"
+          $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash
+          $lines.Add("$zipHash  $zipName")
 
-          $prev = @()
-          $releaseNames = @()
+          $setupHash = (Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256).Hash
+          $lines.Add("$setupHash  YanhuLink-Setup-x64.exe")
+
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
-            $deadline = (Get-Date).AddMinutes(4)
+            $deadline = (Get-Date).AddMinutes(6)
+            $apkAsset = $null
             do {
               try {
                 $rel = Invoke-RestMethod `
                   -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" `
                   -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -ErrorAction Stop
-                $releaseNames = @($rel.assets | ForEach-Object { $_.name })
-                $sumAsset = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
-                if ($sumAsset) {
-                  $text = Invoke-RestMethod -Uri $sumAsset.url `
-                            -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream" } `
-                            -ErrorAction Stop
-                  $body = if ($text -is [byte[]]) { [Text.Encoding]::UTF8.GetString($text) } else { [string]$text }
-                  # 只保留「文件名确实存在于本次 Release」的行，避免旧版本残留
-                  $prev = Get-SumLines $body $releaseNames
-                }
-                # 已经拿到 Android 的行就不必再等
-                if ($prev | Where-Object { $_ -match 'android\.apk' }) { break }
-              } catch { $prev = @() }
+                $apkAsset = $rel.assets | Where-Object { $_.name -like '*.apk' } | Select-Object -First 1
+              } catch { $apkAsset = $null }
+              if ($apkAsset) { break }
               if ((Get-Date) -ge $deadline) { break }
               Start-Sleep -Seconds 15
             } while ($true)
+
+            if ($apkAsset) {
+              $tmp = Join-Path $env:RUNNER_TEMP $apkAsset.name
+              Invoke-WebRequest -Uri $apkAsset.url -OutFile $tmp `
+                -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream" }
+              $apkHash = (Get-FileHash $tmp -Algorithm SHA256).Hash
+              $lines.Add("$apkHash  $($apkAsset.name)")
+              Write-Host "APK 已取到并计算哈希: $($apkAsset.name)"
+            } else {
+              Write-Warning "等待 6 分钟仍未看到 APK 附件，本次只写 Windows 两行"
+            }
           }
 
-          # 去掉与本次重复的行（按文件名去重），再做合并。
-          # 同样只用 空格/制表符 切分，避免把换行当成分隔符。
-          $myNames = $mine | ForEach-Object { ($_ -split '[ \t]+')[-1] }
-          $kept = $prev | Where-Object { $n = ($_ -split '[ \t]+')[-1]; $myNames -notcontains $n }
-
-          # 用 LF 逐行写出：避免 Windows 端 CRLF 与 Android 端 LF 混用
-          $all = @($kept + $mine)
+          # 统一以 LF 结尾逐行写出，避免 CRLF 与 LF 混用
           [IO.File]::WriteAllText(
             (Join-Path $PWD 'SHA256SUMS.txt'),
-            (($all -join "`n") + "`n"),
+            (($lines -join "`n") + "`n"),
             (New-Object Text.UTF8Encoding $false))
+          Write-Host "--- SHA256SUMS.txt ---"
           Get-Content SHA256SUMS.txt
 
       - name: 上传构建产物
