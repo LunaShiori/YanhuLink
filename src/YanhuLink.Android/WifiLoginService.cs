@@ -5,7 +5,7 @@ using Android.OS;
 using Android.Runtime;
 using AndroidX.Core.App;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// WiFi 自动认证前台服务。
@@ -207,7 +207,7 @@ public sealed class WifiLoginService : Service
             {
                 await Task.Delay(delay, ct).ConfigureAwait(false);
             }
-            catch (OperationCanceledException)
+            catch (System.OperationCanceledException)
             {
                 return;
             }
@@ -345,7 +345,9 @@ public sealed class WifiLoginService : Service
             .SetPriority(NotificationCompat.PriorityLow)
             .SetShowWhen(false);
 
-        builder.AddAction(0, "停止", stopPending);
+        // AndroidX 已移除 AddAction(int, CharSequence, PendingIntent) 重载，
+        // 只能自己构造 NotificationCompat.Action（icon 传 0 表示不显示图标）。
+        builder.AddAction(new NotificationCompat.Action(0, "停止", stopPending));
         return builder.Build()!;
     }
 

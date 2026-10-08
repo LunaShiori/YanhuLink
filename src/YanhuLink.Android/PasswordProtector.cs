@@ -1,7 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// 密码加解密。
@@ -37,11 +37,11 @@ public static class PasswordProtector
     private static byte[] DeriveKey()
     {
         var seed = new StringBuilder();
-        try { seed.Append(Android.Provider.Settings.Secure.GetString(
-            Android.App.Application.Context.ContentResolver,
-            Android.Provider.Settings.Secure.AndroidId)); } catch { }
+        try { seed.Append(global::Android.Provider.Settings.Secure.GetString(
+            global::Android.App.Application.Context.ContentResolver,
+            global::Android.Provider.Settings.Secure.AndroidId)); } catch { }
         seed.Append('|');
-        seed.Append(Android.App.Application.Context.PackageName);
+        seed.Append(global::Android.App.Application.Context.PackageName);
         seed.Append("|YanhuLink-v1");
 
         return Rfc2898DeriveBytes.Pbkdf2(

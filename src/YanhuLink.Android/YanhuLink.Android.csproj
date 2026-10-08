@@ -48,7 +48,15 @@
     <NoWarn>$(NoWarn);NETSDK1202</NoWarn>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
 
-    <RootNamespace>YanhuLink.Android</RootNamespace>
+    <!--
+      RootNamespace 必须避开 "Android" 这个词。
+      若写成 YanhuLink.Android，C# 会把 Android.Content / Android.App /
+      Android.Provider 这类引用优先解析到 YanhuLink.Android.*，
+      导致 CS0234 / CS0246（找不到 Android.Content 等）。
+      改用 YanhuLink.Droid 后平台命名空间恢复正常解析。
+      AssemblyName 保持 YanhuLink.Android 不变（产物文件名不受影响）。
+    -->
+    <RootNamespace>YanhuLink.Droid</RootNamespace>
     <AssemblyName>YanhuLink.Android</AssemblyName>
     <ApplicationId>cn.edu.yzpc.yanhulink</ApplicationId>
 

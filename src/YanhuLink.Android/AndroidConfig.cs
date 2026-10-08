@@ -1,7 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// Android 版配置。
@@ -103,8 +103,24 @@ public sealed class AndroidConfig
 /// </summary>
 public static class ConfigStore
 {
-    private static string FilePath =>
-        Path.Combine(FileSystem.AppDataDirectory, "yanhulink.json");
+    // 应用私有文件目录。
+    // 原生 .NET for Android 没有 MAUI 的 FileSystem.AppDataDirectory，
+    // 用 Context.FilesDir（/data/data/<pkg>/files）等价：
+    // 卸载即清除，其他应用无法读取（无需存储权限）。
+    private static string BaseDir
+    {
+        get
+        {
+            var ctx = global::Android.App.Application.Context;
+            var dir = ctx.FilesDir?.AbsolutePath;
+            if (string.IsNullOrEmpty(dir))
+                dir = ctx.CacheDir?.AbsolutePath ?? Path.GetTempPath();
+            Directory.CreateDirectory(dir);
+            return dir;
+        }
+    }
+
+    private static string FilePath => Path.Combine(BaseDir, "yanhulink.json");
 
     private static readonly JsonSerializerOptions Options = new()
     {

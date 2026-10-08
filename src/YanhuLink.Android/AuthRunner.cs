@@ -1,7 +1,7 @@
 using CampusNetLogin.Models;
 using CampusNetLogin.Services;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>一次认证尝试的结局，用于界面反馈与日志。</summary>
 public sealed record LoginOutcome(
@@ -103,7 +103,7 @@ public static class AuthRunner
                 ? LoginOutcome.Online(result.Message)
                 : LoginOutcome.Ok(string.IsNullOrEmpty(result.Message) ? "登录成功" : result.Message);
         }
-        catch (OperationCanceledException)
+        catch (System.OperationCanceledException)
         {
             return LoginOutcome.Fail("认证超时，请检查网络后重试");
         }

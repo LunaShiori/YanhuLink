@@ -1,7 +1,7 @@
 using Android.App;
 using Android.Content;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// 开机自启接收器。

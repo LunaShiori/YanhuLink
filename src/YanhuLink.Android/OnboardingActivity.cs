@@ -7,7 +7,7 @@ using Android.Widget;
 using AndroidX.Core.App;
 using AndroidX.Core.Content;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// 首次设置向导。
@@ -39,9 +39,9 @@ public sealed class OnboardingActivity : Activity
         base.OnCreate(savedInstanceState);
         SetContentView(Resource.Layout.activity_onboarding);
 
-        var btnGrant = FindViewById<com.google.android.material.button.MaterialButton>(
+        var btnGrant = FindViewById<Google.Android.Material.Button.MaterialButton>(
             Resource.Id.btnGrantPermissions);
-        var btnSkip = FindViewById<com.google.android.material.button.MaterialButton>(
+        var btnSkip = FindViewById<Google.Android.Material.Button.MaterialButton>(
             Resource.Id.btnSkip);
 
         btnGrant!.Click += (_, _) => RequestPermissionsThenFinish();

@@ -3,7 +3,7 @@ using Android.Net;
 using Android.Net.Wifi;
 using Android.OS;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// WiFi 状态读取。

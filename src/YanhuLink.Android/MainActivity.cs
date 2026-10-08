@@ -10,7 +10,7 @@ using AndroidX.Core.Content;
 using Google.Android.Material.Button;
 using Google.Android.Material.Snackbar;
 
-namespace YanhuLink.Android;
+namespace YanhuLink.Droid;
 
 /// <summary>
 /// 主界面。
@@ -66,7 +66,7 @@ public sealed class MainActivity : Activity
         // 第一次打开 → 先进向导
         if (!_cfg.OnboardingDone)
         {
-            StartActivity(new Android.Content.Intent(this, typeof(OnboardingActivity)));
+            StartActivity(new global::Android.Content.Intent(this, typeof(OnboardingActivity)));
             Finish();
             return;
         }
@@ -220,7 +220,7 @@ public sealed class MainActivity : Activity
         };
 
         // 「打开即登录」依赖于能拿到网络状态，没权限时同样要提示
-        _switchOnOpen!.CheckedChange += (_, _) =>
+        _switchOnOpen!.CheckedChange += (_, e) =>
         {
             if (_loading) return;
             if (e.IsChecked) EnsurePermissionsThen(RefreshStatus);
@@ -310,7 +310,7 @@ public sealed class MainActivity : Activity
             "需要授予权限才能后台自动认证", Snackbar.LengthLong)
             .SetAction("去授权", _ =>
             {
-                var intent = new Android.Content.Intent(this, typeof(OnboardingActivity));
+                var intent = new global::Android.Content.Intent(this, typeof(OnboardingActivity));
                 StartActivity(intent);
             })
             .Show();
