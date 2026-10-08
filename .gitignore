@@ -47,3 +47,7 @@ tools/move_window.ps1
 Thumbs.db
 desktop.ini
 $RECYCLE.BIN/
+
+## 构建产物：校验和文件（由 CI 生成并作为 Release 附件上传，不入库）
+SHA256SUMS.txt
+SHA256SUMS-Android.txt

@@ -107,21 +107,41 @@ jobs:
           cat SHA256SUMS-Android.txt
 
           # Windows 工作流与本工作流并行运行，两边都会写 Release 的 SHA256SUMS.txt。
-          # 各自只写自己的行会把对方覆盖掉，因此这里先取回已有内容，
-          # 去掉可能与本次重复的行后再合并，保证校验文件里
-          # 同时包含 Windows 与 Android 的产物哈希。
+          # 各自只写自己的行会把对方覆盖掉，因此这里先取回已有内容再合并。
+          #
+          # 注意：必须从 **Release 附件** 取，不能用
+          #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
+          # 后者读的是仓库里提交过的文件，可能残留上一版本的旧哈希
+          # （v2.3.0 曾误带进 v2.2.0 的行）。同时只保留
+          # 「文件名确实在本次 Release 里」的行。
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
-            curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                 -H "Accept: application/vnd.github.raw" \
-                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
-                 -o /dev/null 2>/dev/null || true
-            EXISTING=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                 -H "Accept: application/vnd.github.raw" \
-                 "https://api.github.com/repos/${{ github.repository }}/contents/SHA256SUMS.txt?ref=$TAG" 2>/dev/null || true)
-            if echo "$EXISTING" | grep -qE '[0-9a-f]{64}'; then
-              echo "$EXISTING" | grep -E '[0-9a-f]{64}' > merged.txt
-              grep -v -f <(awk '{print $2}' SHA256SUMS-Android.txt) merged.txt > merged2.txt || true
+            MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
+
+            REL_JSON=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null || true)
+
+            # 纯 shell 解析（不依赖 python，避免多行内联脚本破坏 YAML 缩进）：
+            # 取 Release 里所有附件的名字，以及 SHA256SUMS.txt 附件自身的 API url
+            RELEASE_NAMES=$(printf '%s' "$REL_JSON" | grep -o '"name": *"[^"]*"' | sed 's/.*"name": *"//; s/"$//')
+            ASSET_URL=$(printf '%s' "$REL_JSON" | tr '{},' '\n\n\n' \
+                        | grep -A3 '"name": *"SHA256SUMS.txt"' \
+                        | grep -o '"url": *"[^"]*"' | head -1 \
+                        | sed 's/.*"url": *"//; s/"$//')
+
+            if [ -n "$ASSET_URL" ]; then
+              curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                   -H "Accept: application/octet-stream" \
+                   "$ASSET_URL" -o existing.txt 2>/dev/null || true
+              # 只保留文件名确实存在于本次 Release 的行，过滤旧版本残留
+              : > merged.txt
+              while IFS= read -r line; do
+                echo "$line" | grep -qE '[0-9a-f]{64}' || continue
+                fname=$(echo "$line" | awk '{print $2}')
+                echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
+              done < existing.txt
+              # 去掉与本次 Android 同名（重复）的行
+              grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null || : > merged2.txt
               cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
             else
               cp SHA256SUMS-Android.txt SHA256SUMS.txt

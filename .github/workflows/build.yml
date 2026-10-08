@@ -102,15 +102,32 @@ jobs:
                     ForEach-Object { "$($_.Hash)  YanhuLink-Setup-x64.exe" })
 
           # Android 工作流与本工作流并行，都会写 Release 上的 SHA256SUMS.txt。
-          # 直接整体覆盖会把 Android 的行冲掉，所以先取回远端已有内容并合并。
+          # 直接整体覆盖会把 Android 的行冲掉，所以先取回已有内容并合并。
+          #
+          # 注意：必须从 **Release 附件** 取，不能用
+          #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
+          # 后者读的是仓库里 **提交过的文件**，可能残留上一个版本的旧哈希，
+          # 合并后会污染校验文件（此前 v2.3.0 就误带进了 v2.2.0 的行）。
           $prev = @()
+          $releaseNames = @()
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
             try {
-              $resp = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/contents/SHA256SUMS.txt?ref=$tag" `
-                        -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/vnd.github.raw" } `
-                        -ErrorAction Stop
-              $prev = @($resp -split "`n" | Where-Object { $_ -match '[0-9a-f]{64}' })
+              $rel = Invoke-RestMethod `
+                -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" `
+                -Headers @{ Authorization = "Bearer $env:GH_TOKEN" } -ErrorAction Stop
+              $releaseNames = @($rel.assets | ForEach-Object { $_.name })
+              $sumAsset = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS.txt' } | Select-Object -First 1
+              if ($sumAsset) {
+                $text = Invoke-RestMethod -Uri $sumAsset.url `
+                          -Headers @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = "application/octet-stream" } `
+                          -ErrorAction Stop
+                $body = if ($text -is [byte[]]) { [Text.Encoding]::UTF8.GetString($text) } else { [string]$text }
+                # 只保留「文件名确实存在于本次 Release」的行，避免旧版本残留
+                $prev = @($body -split "`n" |
+                          Where-Object { $_ -match '[0-9a-f]{64}' } |
+                          Where-Object { $n = ($_ -split '\s+')[1]; $releaseNames -contains $n })
+              }
             } catch { $prev = @() }
           }
 
