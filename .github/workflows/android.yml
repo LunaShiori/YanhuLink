@@ -106,50 +106,58 @@ jobs:
             > SHA256SUMS-Android.txt
           cat SHA256SUMS-Android.txt
 
-          # Windows 工作流与本工作流并行运行，两边都会写 Release 的 SHA256SUMS.txt。
-          # 各自只写自己的行会把对方覆盖掉，因此这里先取回已有内容再合并。
+          # 先给出「只含 Android 一行」的兜底结果。
+          # 下面与 Windows 工作流的合并属于「锦上添花」的 best-effort：
+          # 任何一步失败都只影响行数，不能让整个 job 挂掉。
+          cp SHA256SUMS-Android.txt SHA256SUMS.txt
+
+          # Windows 工作流与本工作流并行，两边都会写 Release 的 SHA256SUMS.txt。
+          # 各自只写自己的行会把对方覆盖掉，因此这里先把已有内容取回来合并。
           #
           # 注意：必须从 **Release 附件** 取，不能用
           #   /repos/{repo}/contents/SHA256SUMS.txt?ref={tag}
           # 后者读的是仓库里提交过的文件，可能残留上一版本的旧哈希
-          # （v2.3.0 曾误带进 v2.2.0 的行）。同时只保留
+          # （v2.3.0 曾误带进 v2.2.0 的行）。合并时只保留
           # 「文件名确实在本次 Release 里」的行。
+          #
+          # 本段整体用 `set +e` 包裹：GitHub Actions 默认给 run 加了
+          # `-e -o pipefail`，而 grep 在「无匹配」时返回 1 属于正常分支，
+          # 不加保护会直接中断步骤（此前即因此失败）。
+          set +e
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
             MINE_NAME="YanhuLink-v${{ env.ANDROID_APP_VERSION }}-android.apk"
 
             REL_JSON=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null || true)
-
-            # 纯 shell 解析（不依赖 python，避免多行内联脚本破坏 YAML 缩进）：
-            # 取 Release 里所有附件的名字，以及 SHA256SUMS.txt 附件自身的 API url
+                 "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" 2>/dev/null)
             RELEASE_NAMES=$(printf '%s' "$REL_JSON" | grep -o '"name": *"[^"]*"' | sed 's/.*"name": *"//; s/"$//')
             ASSET_URL=$(printf '%s' "$REL_JSON" | tr '{},' '\n\n\n' \
-                        | grep -A3 '"name": *"SHA256SUMS.txt"' \
-                        | grep -o '"url": *"[^"]*"' | head -1 \
-                        | sed 's/.*"url": *"//; s/"$//')
+                        | grep -o '"browser_download_url": *"[^"]*SHA256SUMS\.txt"' \
+                        | head -1 | sed 's/.*"browser_download_url": *"//; s/"$//')
+
+            echo "release assets:"; printf '%s\n' "$RELEASE_NAMES"
+            echo "sums asset url: $ASSET_URL"
 
             if [ -n "$ASSET_URL" ]; then
-              curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
-                   -H "Accept: application/octet-stream" \
-                   "$ASSET_URL" -o existing.txt 2>/dev/null || true
-              # 只保留文件名确实存在于本次 Release 的行，过滤旧版本残留
+              curl -sSL -H "Authorization: Bearer $GH_TOKEN" "$ASSET_URL" -o existing.txt 2>/dev/null
               : > merged.txt
-              while IFS= read -r line; do
-                echo "$line" | grep -qE '[0-9a-f]{64}' || continue
-                fname=$(echo "$line" | awk '{print $2}')
-                echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
-              done < existing.txt
-              # 去掉与本次 Android 同名（重复）的行
-              grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null || : > merged2.txt
-              cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
-            else
-              cp SHA256SUMS-Android.txt SHA256SUMS.txt
+              if [ -s existing.txt ]; then
+                while IFS= read -r line; do
+                  echo "$line" | grep -qE '[0-9a-f]{64}' || continue
+                  fname=$(echo "$line" | awk '{print $2}')
+                  echo "$RELEASE_NAMES" | grep -Fxq "$fname" && echo "$line" >> merged.txt
+                done < existing.txt
+              fi
+              # 去掉与本次 Android 同名的重复行，再与自己的行合并
+              if [ -s merged.txt ]; then
+                grep -v -F "$MINE_NAME" merged.txt > merged2.txt 2>/dev/null
+                cat merged2.txt SHA256SUMS-Android.txt > SHA256SUMS.txt
+              fi
             fi
-          else
-            cp SHA256SUMS-Android.txt SHA256SUMS.txt
           fi
-          echo "--- 合并后的 SHA256SUMS.txt ---"
+          set -e
+
+          echo "--- 最终 SHA256SUMS.txt ---"
           cat SHA256SUMS.txt
 
       - name: 上传构建产物
