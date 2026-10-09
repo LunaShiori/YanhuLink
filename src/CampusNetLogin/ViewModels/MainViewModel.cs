@@ -382,18 +382,25 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// 开启静默提权：弹一次 UAC，授权后注册最高权限计划任务。
     ///
     /// 返回 false 表示用户取消了 UAC 或注册失败。
-    /// 注意：成功时当前进程会退出（由提权后的新实例接管）。
+    ///
+    /// ★ 注意：本方法**不会**退出当前进程。
+    ///   早先的实现是「带管理员权限重启并退出」，用户点完授权后
+    ///   整个窗口会毫无征兆地消失（首次设置向导里尤其明显，
+    ///   看起来就像程序崩了）。现在改为**就地授权**：
+    ///   以管理员身份跑一个只负责注册计划任务的子进程，
+    ///   当前窗口保持打开，授权结果当场显示。
+    ///
+    ///   代价是当前会话仍是普通权限；计划任务已就位，
+    ///   下次启动即可以管理员身份静默运行（界面会这样提示）。
     /// </summary>
     public bool GrantSilentElevation()
     {
-        // 先在退出前把当前配置落盘，避免新实例读到旧值
+        // 先让配置落盘，保证提权子进程与后续启动读到同一份
         try { SaveConfigQuiet(); } catch { /* ignore */ }
 
-        return ElevationService.GrantSilentElevation(() =>
-        {
-            // 释放单实例锁，让提权后的新实例能正常启动
-            try { App.InstanceGuard?.ReleaseForRestart(); } catch { /* ignore */ }
-        });
+        var ok = ElevationService.GrantSilentElevationInPlace();
+        RefreshElevationState();
+        return ok;
     }
 
     /// <summary>关闭静默提权（删除计划任务）。需管理员权限。</summary>

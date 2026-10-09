@@ -23,6 +23,10 @@ namespace YanhuLink.Droid;
 ///
 /// 界面逻辑刻意保持简单 —— 没有 MVVM、没有数据绑定，
 /// 手机端一个页面用命令式代码反而更直观、更好排错。
+///
+/// ★ 启动入口只在这里声明（MainLauncher = true 会生成 MAIN/LAUNCHER
+///   intent-filter），AndroidManifest.xml 里**不再**重复写 <activity>。
+///   两处都写会让应用出现两个启动图标。
 /// </summary>
 [Activity(
     Label = "砚湖连",
@@ -30,7 +34,10 @@ namespace YanhuLink.Droid;
     MainLauncher = true,
     Exported = true,
     LaunchMode = LaunchMode.SingleTask,
-    ConfigurationChanges = ConfigChanges.Orientation | ConfigChanges.ScreenSize)]
+    ConfigurationChanges = ConfigChanges.Orientation |
+                           ConfigChanges.ScreenSize |
+                           ConfigChanges.KeyboardHidden |
+                           ConfigChanges.UiMode)]
 public sealed class MainActivity : Activity
 {
     private AndroidConfig _cfg = new();

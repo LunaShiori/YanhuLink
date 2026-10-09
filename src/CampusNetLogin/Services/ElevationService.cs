@@ -226,6 +226,62 @@ public static class ElevationService
     }
 
     /// <summary>
+    /// 就地完成静默提权：以管理员身份运行一次 <c>--grant-elevation</c> 子进程，
+    /// 等它注册完计划任务后返回。
+    ///
+    /// 与 <see cref="GrantSilentElevation"/> 的区别（重要）：
+    ///   后者是「重启并退出」—— 当前进程会 Environment.Exit，
+    ///   界面上表现为窗口毫无征兆地消失，用户很容易以为程序崩了
+    ///   （首次设置向导里点「立即授权」就是这个现象）。
+    ///   本方法**不退出当前进程**：调用方的窗口保持打开，
+    ///   授权结果可以当场反馈到界面上。
+    ///
+    /// 代价：当前会话仍是普通权限；计划任务已注册，
+    /// 下次启动（或由计划任务拉起）即可以管理员身份静默运行。
+    /// </summary>
+    /// <param name="timeoutMs">等待提权子进程的时长上限。超时视为失败。</param>
+    /// <returns>true = 已成功注册；false = 用户取消 UAC 或注册失败。</returns>
+    public static bool GrantSilentElevationInPlace(int timeoutMs = 60000)
+    {
+        try
+        {
+            var exe = Environment.ProcessPath;
+            if (string.IsNullOrEmpty(exe)) return false;
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = exe,
+                // --quiet：让子进程不要 AllocConsole()，避免闪一个黑色控制台
+                Arguments = "--grant-elevation --quiet",
+                UseShellExecute = true,     // 必须为 true 才能触发 UAC
+                Verb = "runas",             // 请求提权
+                WorkingDirectory = AppContext.BaseDirectory,
+                WindowStyle = ProcessWindowStyle.Hidden,
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc is null) return false;
+
+            if (!proc.WaitForExit(timeoutMs))
+            {
+                try { proc.Kill(); } catch { /* ignore */ }
+                return false;
+            }
+
+            return proc.ExitCode == 0;
+        }
+        catch (Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            // ERROR_CANCELLED：用户在 UAC 对话框点了「否」
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    /// <summary>
     /// 注册一个「以最高权限运行」的开机计划任务，用于替代注册表 Run 项自启。
     ///
     /// 与 HKCU\...\Run 的区别：

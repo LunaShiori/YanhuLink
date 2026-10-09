@@ -1,6 +1,6 @@
 name: Build Android APK
 
-# 触发：推送 tag（如 v2.3.0）时与 Windows 构建并行；也可手动触发
+# 触发：推送 tag（如 v2.3.1）时与 Windows 构建并行；也可手动触发
 on:
   push:
     tags:

@@ -237,6 +237,10 @@
                                     </StackPanel>
                                 </Button>
                             </StackPanel>
+                            <!-- 取消授权 / 授权失败的补充提示，默认不显示 -->
+                            <TextBlock x:Name="GrantHintText"
+                                       Style="{StaticResource CaptionStyle}" TextWrapping="Wrap"
+                                       Visibility="Collapsed" />
                         </StackPanel>
                     </StackPanel>
                 </Border>

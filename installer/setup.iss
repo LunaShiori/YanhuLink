@@ -11,12 +11,13 @@
 ;   2. 用 Inno Setup 编译本脚本：
 ;        iscc installer\setup.iss
 ;
-;   产物：installer\Output\YanhuLink-Setup-x64.exe
+;   产物：installer\Output\YanhuLink-v2.3.1-win-x64-setup.exe
+;        （文件名带版本号，方便用户一眼分辨新旧安装包）
 ; ============================================================================
 
 #define MyAppName "砚湖连"
 #define MyAppNameEn "YanhuLink"
-#define MyAppVersion "2.3.0"
+#define MyAppVersion "2.3.1"
 #define MyAppPublisher "扬州职业技术大学高邮湖校区"
 #define MyAppURL "https://github.com/LunaShiori/YanhuLink"
 #define MyAppExeName "CampusNetLogin.exe"
@@ -36,8 +37,22 @@ DisableProgramGroupPage=yes
 AllowNoIcons=yes
 LicenseFile=..\LICENSE
 OutputDir=Output
-OutputBaseFilename=YanhuLink-Setup-x64
+; 文件名包含版本号，便于用户区分不同版本的安装包
+OutputBaseFilename=YanhuLink-v{#MyAppVersion}-win-x64-setup
+; 安装包自身的图标（资源管理器里看到的那个）
 SetupIconFile=..\src\CampusNetLogin\Assets\app.ico
+; ★ 安装向导的品牌图。
+;   不配置这两项时，向导会显示 Inno Setup 的默认品牌图，
+;   看起来就像「安装包没有应用图标」。图片由 tools/gen_wizard_images.py 生成。
+WizardImageFile=assets\wizard-large.bmp
+WizardSmallImageFile=assets\wizard-small.bmp
+; exe 文件属性（右键 → 属性 → 详细信息），让安装包看起来是正式发布的软件
+VersionInfoVersion={#MyAppVersion}
+VersionInfoCompany={#MyAppPublisher}
+VersionInfoDescription={#MyAppName} {#MyAppVersion} 安装程序
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion={#MyAppVersion}
+VersionInfoCopyright=Copyright (C) 2026 LunaShiori
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
@@ -68,11 +83,15 @@ Source: "..\publish\win-x64\*"; DestDir: "{app}"; Flags: ignoreversion recursesu
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+; 显式指定 IconFilename，避免个别系统上快捷方式退化成白板图标
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
+    IconFilename: "{app}\Assets\app.ico"
 Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
+    IconFilename: "{app}\Assets\app.ico"; Tasks: desktopicon
 ; 开机自启（后台模式）
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
+    IconFilename: "{app}\Assets\app.ico"; \
     Parameters: "--background"; Tasks: startupicon
 
 [Run]

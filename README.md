@@ -281,8 +281,12 @@ YanhuLink.exe --revoke-elevation
 
 | 文件 | 说明 |
 |---|---|
-| `YanhuLink-Setup-x64.exe` | **推荐**：安装包，含桌面快捷方式与卸载项 |
-| `YanhuLink-v2.2.0-win-x64-portable.zip` | 绿色版：解压即用，无需安装 |
+| `YanhuLink-v2.3.1-win-x64-setup.exe` | **推荐**：Windows 安装包，含桌面快捷方式与卸载项 |
+| `YanhuLink-v2.3.1-win-x64-portable.zip` | Windows 绿色版：解压即用，无需安装 |
+| `YanhuLink-v1.0.0-android.apk` | 安卓版（独立版本号，当前 1.0.0） |
+| `SHA256SUMS.txt` | 以上文件的 SHA-256 校验和 |
+
+> 安装包文件名自带版本号，方便一眼分辨新旧。历史版本可在 Releases 页面按 tag 查找。
 
 > **系统要求**：Windows 10 1809（17763）及以上 / Windows 11，x64 架构。
 >
@@ -382,7 +386,7 @@ dotnet publish src/CampusNetLogin/CampusNetLogin.csproj \
   -o publish/win-x64
 
 # 3. 打包绿色版（PowerShell）
-powershell -NoProfile -Command "Compress-Archive -Path 'publish/win-x64/*' -DestinationPath 'YanhuLink-v2.2.0-win-x64-portable.zip' -Force"
+powershell -NoProfile -Command "Compress-Archive -Path 'publish/win-x64/*' -DestinationPath 'YanhuLink-v2.3.1-win-x64-portable.zip' -Force"
 
 # 4. 生成安装包（需 Inno Setup 6）
 #    注意：Inno Setup 官方不含中文语言包，若未装请先执行第 5 步
@@ -406,8 +410,8 @@ iscc installer/setup.iss
 推送 tag 即自动构建并发布 Release（工作流已内置中文语言包下载与 SHA256 校验和生成）：
 
 ```bash
-git tag v2.0.0
-git push origin v2.0.0
+git tag v2.3.1
+git push origin v2.3.1
 ```
 
 ---

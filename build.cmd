@@ -7,13 +7,13 @@ REM  砚湖连 YanhuLink —— 一键构建脚本（绿色版 ZIP + 安装包 E
 REM ---------------------------------------------------------------------------
 REM  用法：双击运行本文件即可。
 REM  产物：
-REM    build\YanhuLink-v2.1.0-win-x64-portable.zip        绿色版
-REM    installer\Output\YanhuLink-Setup-x64.exe           安装包
+REM    build\YanhuLink-v2.3.1-win-x64-portable.zip        绿色版
+REM    installer\Output\YanhuLink-v2.3.1-win-x64-setup.exe  安装包
 REM ===========================================================================
 
 cd /d "%~dp0"
 
-set APP_VERSION=2.1.0
+set APP_VERSION=2.3.1
 set ISCC=C:\Users\Water\AppData\Local\Programs\Inno Setup 6\ISCC.exe
 if not exist "%ISCC%" set ISCC=C:\Program Files (x86)\Inno Setup 6\ISCC.exe
 
@@ -118,7 +118,7 @@ for %%F in ("build\YanhuLink-v%APP_VERSION%-win-x64-portable.zip") do (
     if exist "%%F" echo   [绿色版] %%F   (%%~zF 字节)
 )
 if not defined SKIP_INSTALLER (
-    for %%F in ("installer\Output\YanhuLink-Setup-x64.exe") do (
+    for %%F in ("installer\Output\YanhuLink-v%APP_VERSION%-win-x64-setup.exe") do (
         if exist "%%F" echo   [安装包] %%F   (%%~zF 字节)
     )
 )

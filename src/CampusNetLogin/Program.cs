@@ -40,7 +40,11 @@ public static class Program
 
             if (isCli)
             {
-                AttachConsoleIfNeeded();
+                // --quiet：由图形界面以管理员身份拉起的内部子进程
+                //（首次设置向导的「立即授权」就是这条路径）。
+                // 这种场景下不要新建控制台窗口，否则用户会看到一个黑框一闪而过。
+                // CLI 输出仍会写入 %TEMP%\CampusNetLogin_cli.txt 供排查。
+                AttachConsoleIfNeeded(allowAlloc: !lower.Contains("--quiet"));
                 Trace("console attached");
                 var code = RunCli(args);
                 Trace($"RunCli -> {code}");
@@ -356,12 +360,20 @@ public static class Program
         try { Console.WriteLine(text); } catch { /* 无控制台时忽略 */ }
     }
 
-    private static void AttachConsoleIfNeeded()
+    /// <param name="allowAlloc">
+    /// 是否允许在没有父控制台时新建一个。
+    /// 传 false 用于图形界面拉起的内部子进程（避免黑框闪现），
+    /// 此时输出只进缓存文件。
+    /// </param>
+    private static void AttachConsoleIfNeeded(bool allowAlloc = true)
     {
         _cliOutput.Clear();
         try
         {
-            if (AttachConsole(ATTACH_PARENT_PROCESS) || AllocConsole())
+            var attached = AttachConsole(ATTACH_PARENT_PROCESS);
+            if (!attached && allowAlloc) attached = AllocConsole();
+
+            if (attached)
             {
                 _consoleAttached = true;
                 // 附着后需要重设输出流，否则 Console.WriteLine 仍写向旧句柄

@@ -83,7 +83,7 @@ public sealed class UpdateService : IDisposable
     public const string RepoName = "YanhuLink";
 
     /// <summary>当前版本（与 csproj 的 &lt;Version&gt; 保持一致）。</summary>
-    public const string CurrentVersion = "2.3.0";
+    public const string CurrentVersion = "2.3.1";
 
     /// <summary>产品名，用于展示。</summary>
     public const string ProductName = "砚湖连 YanhuLink";

@@ -270,7 +270,25 @@ public sealed class WifiLoginService : Service
                 UpdateNotification($"正在认证「{ssid}」…");
             }
 
-            var outcome = await AuthRunner.LoginAsync(cfg).ConfigureAwait(false);
+            // ★ 关键：把本进程的 socket 绑定到 WiFi 再发请求。
+            //
+            // 校园网认证服务器是内网地址（172.18.1.6），只有 WiFi 这条链路能到。
+            // 当手机开着移动数据时，系统默认网络是移动数据，未绑定的 socket
+            // 会带上移动数据的路由标记 → 连不上内网认证服务器 →
+            // 表现为「开着流量就认证失败，关掉流量反而正常」。
+            //
+            // 绑定后请求必定走 WiFi；用完立刻恢复，不影响进程内其他网络操作。
+            bool bound = WifiHelper.BindProcessToWifi();
+            LoginOutcome outcome;
+            try
+            {
+                outcome = await AuthRunner.LoginAsync(cfg).ConfigureAwait(false);
+            }
+            finally
+            {
+                if (bound) WifiHelper.UnbindProcess();
+            }
+
             LastOutcome = outcome;
 
             if (outcome.Success)

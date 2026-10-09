@@ -364,13 +364,16 @@ public sealed partial class FailoverPage : Page
 
         if (!ok) return;
 
-        bool started = _vm.GrantSilentElevation();
+        bool granted = _vm.GrantSilentElevation();
 
-        if (!started)
+        if (granted)
         {
-            // 用户取消了 UAC：单实例锁已被释放，需要重新获取
-            try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
-
+            // 授权是「就地」完成的，窗口与页面都保持打开，这里直接刷新展示
+            RefreshPrivilege();
+        }
+        else
+        {
+            // 用户取消了 UAC —— 进程没有重启，也不需要重新抢单实例锁
             await Dialogs.InfoAsync("已取消提权",
                 "你取消了管理员权限请求。\n\n" +
                 "网络热备的自动切换将无法生效，但登录、检测、后台守护等功能不受影响。\n" +

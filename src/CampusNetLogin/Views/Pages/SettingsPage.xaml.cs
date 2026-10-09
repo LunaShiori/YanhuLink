@@ -105,10 +105,14 @@ public sealed partial class SettingsPage : Page
             primaryText: "确认授权", closeText: "取消", root: XamlRoot);
         if (!ok) return;
 
-        bool started = _vm.GrantSilentElevation();
-        if (!started)
+        bool granted = _vm.GrantSilentElevation();
+        if (granted)
         {
-            try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
+            // 授权是「就地」完成的，设置页保持打开，直接刷新展示
+            RefreshStartupBars();
+        }
+        else
+        {
             await Dialogs.InfoAsync("已取消提权", "你取消了管理员权限请求，随时可以重试。");
         }
     }

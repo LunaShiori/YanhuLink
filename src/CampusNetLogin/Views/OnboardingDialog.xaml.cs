@@ -122,39 +122,51 @@ public sealed partial class OnboardingDialog : ContentDialog
         bool granted = _vm.SilentElevationGranted;
 
         PermissionStatusText.Text = granted
-            ? "已授权 —— 后台运行不会再出现弹窗，可以放心打游戏了。"
+            ? "✓ 已授权 —— 后台运行不会再出现弹窗，可以放心打游戏了。"
             : "尚未授权。断网时程序仍会尝试自动登录，但无法自动切换到手机热点。";
 
         GrantNowButton.Visibility = granted ? Visibility.Collapsed : Visibility.Visible;
+
+        if (granted)
+        {
+            // 授权成功后不再需要「取消」那类提示
+            GrantHintText.Visibility = Visibility.Collapsed;
+        }
     }
 
     /// <summary>
     /// 在向导里直接授权。
     ///
-    /// 注意：授权会以管理员身份重启程序（当前进程退出），
-    /// 因此向导本身也会被关掉。这是预期行为 —— 重启后用户继续用程序即可，
-    /// 配置在重启前已落盘，不会丢失。
+    /// 这里是**就地授权**：以管理员身份跑一个只负责注册计划任务的子进程，
+    /// 当前进程与向导窗口都保留 —— 授权完成后用户仍在向导里，
+    /// 可以继续往下看「完成」页。
+    ///
+    /// （早先是「提权重启并退出」，向导会连同窗口一起消失，
+    ///   用户普遍会误以为程序崩了。现已改为不退出进程。）
     /// </summary>
     private void OnGrantElevationNow(object sender, RoutedEventArgs e)
     {
-        // 先把当前步骤填的内容推入 VM 并完整提交（含重启守护服务），
-        // 避免提权重启后配置与服务状态不一致
+        // 先把当前步骤填的内容推入 VM 并完整提交，避免授权前后配置不一致
         PushAccountToVm();
         _vm.AutoLoginOnStart = AutoLoginSwitch.IsOn;
         _vm.WatchdogEnabled = WatchdogSwitch.IsOn;
         _vm.AutoStart = AutoStartSwitch.IsOn;
 
-        // 注意：CommitSetup 内部已包含 FirstRunDone=true 与 SaveConfig，
-        // 因此提权重启后的新实例不会再弹向导，也是配置完整的。
+        // CommitSetup 内部已包含 FirstRunDone=true 与 SaveConfig，
+        // 因此授权完成后用户直接关掉向导也不会再被弹第二次。
         _vm.CommitSetup();
 
-        bool started = _vm.GrantSilentElevation();
+        bool granted = _vm.GrantSilentElevation();
 
-        if (!started)
+        // 无论成功与否都刷新状态：窗口保持打开，结果当场可见
+        RefreshPermissionStatus();
+
+        if (!granted)
         {
-            // 用户取消了 UAC：恢复单实例锁，继续留在向导里
-            try { App.InstanceGuard?.TryAcquire(); } catch { /* ignore */ }
-            RefreshPermissionStatus();
+            // 用户取消了 UAC：留在向导里，允许重试
+            GrantHintText.Text = "已取消授权。可以点上面的按钮重试，" +
+                                 "或者直接点「下一步」跳过 —— 不做网络热备自动切换也能正常用。";
+            GrantHintText.Visibility = Visibility.Visible;
         }
     }
 

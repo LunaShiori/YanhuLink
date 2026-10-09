@@ -68,17 +68,18 @@
         android:name="android.security.net.config"
         android:resource="@xml/network_security_config" />
 
-    <activity
-        android:name=".MainActivity"
-        android:exported="true"
-        android:label="@string/app_name"
-        android:launchMode="singleTask"
-        android:configChanges="orientation|screenSize|keyboardHidden|uiMode">
-      <intent-filter>
-        <action android:name="android.intent.action.MAIN" />
-        <category android:name="android.intent.category.LAUNCHER" />
-      </intent-filter>
-    </activity>
+    <!--
+      ★ 注意：这里**刻意不写** <activity> 声明。
+
+      .NET for Android 会自动为每个带 [Activity] 特性的类型生成一条
+      <activity>（含 MainLauncher=true 生成的 MAIN/LAUNCHER intent-filter）。
+      如果这里再手写一份，构建时的 manifest 合并会产生**两条启动入口**，
+      结果就是装完后桌面上出现**两个应用图标**。
+
+      因此启动 Activity 的全部配置都集中在
+      MainActivity.cs 的 [Activity] 特性里，这里保持唯一来源。
+      （Service / Receiver 不存在这个问题，仍保留在清单里。）
+    -->
 
     <!--
       WiFi 自动认证前台服务。

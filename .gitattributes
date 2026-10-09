@@ -12,6 +12,10 @@
 # ---- 明确指定为二进制，禁止行尾转换 ----
 *.ico   binary
 *.png   binary
+# ★ 安装向导图必须是 BMP。若被当作文本做行尾转换，
+#   文件头/像素数据里的 0x0D0A 会被改写，Inno Setup 会直接报
+#   「无效的位图」或向导显示花屏，故必须声明为 binary。
+*.bmp   binary
 *.jpg   binary
 *.jpeg  binary
 *.gif   binary

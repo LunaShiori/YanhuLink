@@ -9,7 +9,7 @@ on:
 
 env:
   # ↓ 改版本号时同步修改这里和 installer/setup.iss 中的 MyAppVersion
-  APP_VERSION: '2.3.0'
+  APP_VERSION: '2.3.1'
 
 # 显式声明工作流权限。
 # 默认 GITHUB_TOKEN 只有只读权限，会导致 action-gh-release 报
@@ -107,8 +107,10 @@ jobs:
           $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash
           $lines.Add("$zipHash  $zipName")
 
-          $setupHash = (Get-FileHash installer\Output\YanhuLink-Setup-x64.exe -Algorithm SHA256).Hash
-          $lines.Add("$setupHash  YanhuLink-Setup-x64.exe")
+          # 安装包文件名带版本号（与 installer/setup.iss 的 OutputBaseFilename 一致）
+          $setupName = "YanhuLink-v$env:APP_VERSION-win-x64-setup.exe"
+          $setupHash = (Get-FileHash "installer\Output\$setupName" -Algorithm SHA256).Hash
+          $lines.Add("$setupHash  $setupName")
 
           if ($env:GITHUB_REF -like 'refs/tags/v*') {
             $tag = $env:GITHUB_REF -replace '^refs/tags/', ''
@@ -163,7 +165,54 @@ jobs:
             YanhuLink-v*-win-x64-portable.zip
             installer/Output/*.exe
             SHA256SUMS.txt
-          generate_release_notes: true
+          # ★ 显式撰写更新详情。
+          #   不用 generate_release_notes：GitHub 自动生成的只有一串 commit 标题，
+          #   用户看到的是「修复 #12」这类无信息量的条目。
+          #   这里直接写清楚「改了什么、影响谁、怎么用」，让下载页自己就能说清。
+          #   每次发版前按实际改动修改本段内容。
+          body: |
+            ## 砚湖连 YanhuLink v${{ env.APP_VERSION }}
+
+            扬州职业技术大学高邮湖校区校园网自动连接工具 —— 本版为**问题修复版**。
+
+            ### 本次修复与改进
+
+            **安卓端**
+
+            - **修复安装后桌面出现两个「砚湖连」图标** —— 应用清单与代码特性重复声明了启动
+              Activity，打包时被合并成两条启动入口。现已统一为单一来源，桌面只保留一个图标。
+            - **修复开启移动数据时无法识别校园网** —— 原来只检查系统「默认网络」，而校园网是
+              Portal 认证，认证通过前系统会把默认网络保持在移动数据上，于是被误判为「没连
+              WiFi」。现改为遍历全部网络定位 WiFi 链路，并在认证请求期间把进程 socket 绑定
+              到 WiFi，确保内网认证服务器（172.18.1.6）可达。**开着流量也能正常自动登录。**
+
+            **电脑端**
+
+            - **修复首次设置向导中「立即授权」后窗口直接消失** —— 原实现是重启进程，视觉上
+              就是窗口一闪没了。现改为原地提权（拉起提权子进程并等待其结束），授权完成后
+              向导保持打开，并给出明确的成功/失败提示。
+            - **安装包补齐应用图标** —— 新增安装向导品牌图，桌面与开始菜单快捷方式、卸载项
+              均显式指定图标，同时补全了 exe 属性中的版本号、公司、产品说明等信息。
+            - **安装包文件名加入版本号** —— 新名称为
+              `YanhuLink-v【版本号】-win-x64-setup.exe`，一眼就能分辨新旧安装包。
+
+            **发布**
+
+            - 本 Release 页改为直接列出具体更新内容，不再只放一个跳转链接。
+
+            ### 下载
+
+            | 文件 | 说明 |
+            | --- | --- |
+            | `YanhuLink-v${{ env.APP_VERSION }}-win-x64-setup.exe` | **推荐**：Windows 安装包，含桌面快捷方式与卸载项 |
+            | `YanhuLink-v${{ env.APP_VERSION }}-win-x64-portable.zip` | Windows 绿色版：解压即用，无需安装 |
+            | `YanhuLink-v1.0.0-android.apk` | 安卓版（独立版本号，当前 1.0.0） |
+            | `SHA256SUMS.txt` | 以上文件的 SHA-256 校验和 |
+
+            > **系统要求**：Windows 10 1809（17763）及以上 / Windows 11，x64 架构。
+            > 发布包已自带 .NET 运行时与 Windows App Runtime，**无需任何前置依赖**。
+            >
+            > 安卓端为调试签名包，部分机型需在系统设置中允许「安装未知来源应用」。
           draft: false
           prerelease: false
           # 重复推送同一个 tag 时覆盖已有附件，而不是报错
