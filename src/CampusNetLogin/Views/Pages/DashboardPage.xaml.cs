@@ -34,8 +34,6 @@ public sealed partial class DashboardPage : Page
         {
             RefreshStatus();
             RefreshRecent();
-            // 首页可见时才做主动测速：用户不看的时候没必要占用带宽
-            _vm.SetSpeedViewerActive(true);
         };
 
         Unloaded += (_, _) =>
@@ -44,7 +42,6 @@ public sealed partial class DashboardPage : Page
             _vm.FailoverChanged -= OnFailoverChanged;
             _vm.SpeedChanged -= OnSpeedChanged;
             App.Log.EntryAdded -= OnEntryAdded;
-            _vm.SetSpeedViewerActive(false);
         };
     }
 
@@ -234,20 +231,6 @@ public sealed partial class DashboardPage : Page
     {
         SpeedText.Text = _vm.DownSpeedText;
         SpeedCaptionText.Text = _vm.SpeedCaption;
-
-        // 低速时数字变红，让「能连上但龟速」一眼可见
-        if (_vm.SpeedSlow)
-            SpeedText.Foreground = Brush("StatusOfflineBrush");
-        else
-            SpeedText.ClearValue(TextBlock.ForegroundProperty);
-
-        // 有主动测速结果时，把「链路能力」补进说明里
-        if (!_vm.SpeedSlow &&
-            snap.CapacityDownBytesPerSec > 0 &&
-            snap.Sample is { DownBytesPerSec: > 1024 } s)
-        {
-            SpeedCaptionText.Text = $"实时 · 链路可跑 {snap.CapacityText}";
-        }
     }
 
     private async void OnSpeedTestClick(object sender, RoutedEventArgs e)
@@ -258,17 +241,13 @@ public sealed partial class DashboardPage : Page
         try
         {
             var result = await _vm.MeasureSpeedNowAsync();
-            if (result.Ok)
-            {
-                SpeedText.Text = SpeedTestService.FormatSpeed(result.DownBytesPerSec);
-                SpeedCaptionText.Text = $"本次实测 · {result.Message}";
-            }
-            else
-            {
-                // 测速失败在校园网里是**正常**情况：认证服务器上没有大文件可下载。
-                // 所以要明确告诉用户「实时速率不受影响」，避免误以为功能坏了。
-                SpeedCaptionText.Text = $"测速未取到样本（{result.Message}）";
-            }
+
+            // 卡片的大数字始终是**实时速率**，测速结果只进提示文字 ——
+            // 主动测速测的是「到认证服务器」的吞吐，拿它冒充外网带宽会误导。
+            SpeedCaptionText.Text = _vm.SpeedCaption;
+
+            if (!result.Ok)
+                App.Log.Warn($"测速未取到样本：{result.Message}（实时速率不受影响）");
         }
         finally
         {

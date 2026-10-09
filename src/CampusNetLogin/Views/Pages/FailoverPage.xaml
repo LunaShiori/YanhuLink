@@ -218,14 +218,12 @@
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}">
                                     <Run Text="实时上行 " />
                                     <Run Text="{Binding UpSpeedText}" FontWeight="SemiBold" />
-                                    <Run Text="　·　链路能力 " />
-                                    <Run Text="{Binding CapacityText}" FontWeight="SemiBold" />
                                 </TextBlock>
                             </StackPanel>
 
                             <Button Grid.Column="1" x:Name="SpeedTestButton" Click="OnSpeedTest"
                                     Padding="12,6"
-                                    ToolTipService.ToolTip="下载一小段数据（不超过 512KB）估算当前带宽">
+                                    ToolTipService.ToolTip="向校园认证服务器请求一小段数据（≤384KB）测一下内网链路响应，不代表外网带宽">
                                 <StackPanel Orientation="Horizontal" Spacing="6">
                                     <FontIcon Glyph="&#xE895;" FontSize="13" />
                                     <TextBlock Text="测速" FontSize="12.5" />
@@ -483,19 +481,12 @@
                                            Minimum="1" Maximum="20" SmallChange="1"
                                            SpinButtonPlacementMode="Compact"
                                            Value="{Binding RecoveryThreshold, Mode=TwoWay}" />
-
-                                <TextBlock Grid.Row="2" Grid.Column="0" Text="速率过低阈值（KB/s，0 = 不判定）"
-                                           Style="{StaticResource FieldLabelStyle}" />
-                                <NumberBox Grid.Row="2" Grid.Column="1" x:Name="SlowThresholdBox"
-                                           Minimum="0" Maximum="100000" SmallChange="16"
-                                           SpinButtonPlacementMode="Compact"
-                                           Value="{Binding SpeedSlowThresholdKbps, Mode=TwoWay}" />
                             </Grid>
 
                             <StackPanel Spacing="4">
                                 <TextBlock Text="速率监测" FontSize="13" FontWeight="SemiBold" />
                                 <TextBlock Style="{StaticResource CaptionStyle}"
-                                           Text="实时速率靠读网卡计数得来，不产生任何流量；只有首页可见时才做小样本主动测速。" />
+                                           Text="只读取网卡计数器显示实时上下行，不产生任何网络流量，也不参与故障判定。" />
                             </StackPanel>
 
                             <StackPanel>
@@ -506,19 +497,6 @@
                                 <TextBlock Text="{Binding SpeedMonitorToggleDescription}"
                                            Style="{StaticResource CaptionStyle}" Margin="0,-6,0,0" />
                             </StackPanel>
-
-                            <Grid ColumnSpacing="14">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*" />
-                                    <ColumnDefinition Width="120" />
-                                </Grid.ColumnDefinitions>
-                                <TextBlock Grid.Column="0" Text="主动测速间隔（秒）"
-                                           Style="{StaticResource FieldLabelStyle}" />
-                                <NumberBox Grid.Column="1" x:Name="ActiveIntervalBox"
-                                           Minimum="30" Maximum="3600" SmallChange="30"
-                                           SpinButtonPlacementMode="Compact"
-                                           Value="{Binding SpeedActiveInterval, Mode=TwoWay}" />
-                            </Grid>
 
                             <StackPanel>
                                 <ToggleSwitch MinWidth="0"

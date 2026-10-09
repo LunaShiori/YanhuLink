@@ -1,6 +1,6 @@
 name: Build Android APK
 
-# 触发：推送 tag（如 v2.3.1）时与 Windows 构建并行；也可手动触发
+# 触发：推送 tag（如 v2.3.2）时与 Windows 构建并行；也可手动触发
 on:
   push:
     tags:
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 env:
-  ANDROID_APP_VERSION: '1.0.0'
+  ANDROID_APP_VERSION: '1.0.1'
 
 permissions:
   contents: write

@@ -61,9 +61,9 @@
     <ApplicationId>cn.edu.yzpc.yanhulink</ApplicationId>
 
     <ApplicationTitle>砚湖连</ApplicationTitle>
-    <ApplicationVersion>1</ApplicationVersion>
-    <ApplicationDisplayVersion>1.0</ApplicationDisplayVersion>
-    <Version>1.0.0</Version>
+    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0.1</ApplicationDisplayVersion>
+    <Version>1.0.1</Version>
 
     <Product>砚湖连 YanhuLink</Product>
     <Company>Yangzhou Polytechnic University</Company>

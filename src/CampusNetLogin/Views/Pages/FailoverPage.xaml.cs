@@ -31,9 +31,6 @@ public sealed partial class FailoverPage : Page
         UpdateBackupHint();
         RefreshPrivilege();
 
-        // 这个页面也展示实时速率，同样需要触发主动测速
-        _vm.SetSpeedViewerActive(true);
-
         if (!_initialized)
         {
             _initialized = true;
@@ -46,7 +43,6 @@ public sealed partial class FailoverPage : Page
     {
         _vm.FailoverChanged -= OnSnapshot;
         _vm.SpeedChanged -= OnSpeedSnapshot;
-        _vm.SetSpeedViewerActive(false);
     }
 
     private void OnSpeedSnapshot(SpeedSnapshot snap)
@@ -178,7 +174,16 @@ public sealed partial class FailoverPage : Page
                     $"未能从认证服务器取到足够的测速样本。\n\n原因：{result.Message}\n\n" +
                     "这通常说明认证服务器没有可供下载的静态文件，" +
                     "属于正常现象 —— 实时速率（读网卡计数）不受影响，仍然准确。");
+                return;
             }
+
+            // 成功也给个回执：否则点了按钮界面毫无变化，用户会以为没生效。
+            // 文案必须点明这是「到认证服务器」的速度，别被当成外网带宽。
+            await Dialogs.InfoAsync("测速完成",
+                $"到校园认证服务器约 {SpeedTestService.FormatSpeed(result.DownBytesPerSec)}\n\n" +
+                $"{result.Message}\n\n" +
+                "这个数字反映的是本机到校内认证服务器这条链路的响应能力，" +
+                "不是校园网出口带宽 —— 认证服务器上没有大文件可下载，样本靠重复请求小页面凑出。");
         }
         finally { SpeedTestButton.IsEnabled = true; }
     }

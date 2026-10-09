@@ -198,6 +198,15 @@ public sealed class AppConfig
 
     // ==================================================================
     // 速率实时监测
+    //
+    // ★ 只保留「被动采样」相关的两个开关。
+    //   原先还有 speed_active_interval（每 3 分钟自动主动测速）、
+    //   speed_slow_threshold_kbps / speed_slow_strikes（低速纳入故障判定），
+    //   三者已一并移除，原因见 SpeedMonitorService 的类注释：
+    //   被动采样反映的是「此刻的占用」而非「链路能力」，
+    //   拿它做「速率过低 = 故障」的判定必然误报；
+    //   而主动测速测的是认证服务器返回小页面的速度，同样撑不起这个判定。
+    //   旧配置文件里的这几个键会被 JSON 反序列化自动忽略，无需迁移。
     // ==================================================================
 
     /// <summary>
@@ -215,33 +224,6 @@ public sealed class AppConfig
     /// </summary>
     [JsonPropertyName("speed_sample_interval")]
     public int SpeedSampleInterval { get; set; } = 2;
-
-    /// <summary>
-    /// 主动测速间隔（秒）。默认 180 秒（3 分钟）。
-    ///
-    /// 主动测速会真的占用一小段带宽（512 KB 以内、3.5 秒内），
-    /// 因此刻意拉长间隔、并只在首页可见时才跑。
-    /// 3 分钟一次 × 512 KB ≈ 2.8 KB/s 的平均占用，完全可以忽略。
-    /// </summary>
-    [JsonPropertyName("speed_active_interval")]
-    public int SpeedActiveInterval { get; set; } = 180;
-
-    /// <summary>
-    /// 速率过低阈值（KB/s）。默认 64 KB/s。
-    ///
-    /// 用途：当校园网「延迟正常、丢包正常，但速率长期趴在地上」时，
-    /// 也能被识别为异常并触发切换 —— 这正是「能连上但什么都干不了」
-    /// 的典型场景（认证通了、出口被限速）。
-    /// 设为 0 表示关闭「速率异常纳入故障判定」。
-    /// </summary>
-    [JsonPropertyName("speed_slow_threshold_kbps")]
-    public int SpeedSlowThresholdKbps { get; set; } = 64;
-
-    /// <summary>
-    /// 连续多少次速率过低才纳入故障判定。默认 4 次（≈ 12 秒主动测速周期下的观察）。
-    /// </summary>
-    [JsonPropertyName("speed_slow_strikes")]
-    public int SpeedSlowStrikes { get; set; } = 4;
 
     public string SuffixFor(string ispName) =>
         IspSuffixes.TryGetValue(ispName, out var s) ? s : IspPresets.DefaultSuffix(ispName);
@@ -285,8 +267,5 @@ public sealed class AppConfig
 
         SpeedMonitorEnabled = SpeedMonitorEnabled,
         SpeedSampleInterval = SpeedSampleInterval,
-        SpeedActiveInterval = SpeedActiveInterval,
-        SpeedSlowThresholdKbps = SpeedSlowThresholdKbps,
-        SpeedSlowStrikes = SpeedSlowStrikes,
     };
 }

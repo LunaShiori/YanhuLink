@@ -139,19 +139,15 @@ public sealed class NetworkProbeService
     /// <param name="latencyLimitMs">延迟健康上限（毫秒）。</param>
     /// <param name="lossLimit">丢包率健康上限（0~1）。</param>
     /// <param name="ct">取消令牌。</param>
-    /// <param name="downBytesPerSec">可选：当前实测下行速率（字节/秒），-1 表示未测。</param>
-    /// <param name="slowLimitBytesPerSec">可选：速率过低阈值（字节/秒），&lt;=0 表示不判定。</param>
     public async Task<NetworkProbe> ProbeAsync(
         string target,
         int count = 3,
         double latencyLimitMs = 300,
         double lossLimit = 0.5,
-        CancellationToken ct = default,
-        double downBytesPerSec = -1,
-        double slowLimitBytesPerSec = 0)
+        CancellationToken ct = default)
     {
-        return await ProbeCoreAsync(target, count, latencyLimitMs, lossLimit, ct,
-            downBytesPerSec, slowLimitBytesPerSec).ConfigureAwait(false);
+        return await ProbeCoreAsync(target, count, latencyLimitMs, lossLimit, ct)
+            .ConfigureAwait(false);
     }
 
     /// <summary>
@@ -178,13 +174,11 @@ public sealed class NetworkProbeService
         int count = 3,
         double latencyLimitMs = 300,
         double lossLimit = 0.5,
-        CancellationToken ct = default,
-        double downBytesPerSec = -1,
-        double slowLimitBytesPerSec = 0)
+        CancellationToken ct = default)
     {
         // 内网探测（主判定）
-        var primary = await ProbeCoreAsync(intranetTarget, count, latencyLimitMs, lossLimit, ct,
-            downBytesPerSec, slowLimitBytesPerSec).ConfigureAwait(false);
+        var primary = await ProbeCoreAsync(intranetTarget, count, latencyLimitMs, lossLimit, ct)
+            .ConfigureAwait(false);
 
         // 未启用公网目标 → 直接返回，行为与旧版一致
         if (string.IsNullOrWhiteSpace(publicTarget))
@@ -227,9 +221,7 @@ public sealed class NetworkProbeService
         int count,
         double latencyLimitMs,
         double lossLimit,
-        CancellationToken ct,
-        double downBytesPerSec = -1,
-        double slowLimitBytesPerSec = 0)
+        CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(target))
             return NetworkProbe.Failed(target, "未配置探测目标");
@@ -292,13 +284,11 @@ public sealed class NetworkProbeService
         double avg = rtts.Count > 0 ? rtts.Average() : -1;
         bool success = received > 0;
 
-        // 速率过低：只有在「确实测过速」且「配了阈值」时才参与判定。
-        // 注意它**不会**把 success 打成 false —— 链路是通的，只是慢。
-        bool slow = success &&
-                    slowLimitBytesPerSec > 0 &&
-                    downBytesPerSec >= 0 &&
-                    downBytesPerSec < slowLimitBytesPerSec;
-
+        // 健康判定只看两件事：**通不通**（丢包）与**快不快**（延迟）。
+        //
+        // 曾经这里还看过「实测下行速率是否低于阈值」，已移除：
+        // 那个速率来自网卡计数器的被动采样，反映的是「此刻有没有人在用网」，
+        // 空闲时必然很低，会把正常的网络判成故障（详见 SpeedMonitorService 的注释）。
         string reason;
         bool healthy;
         if (!success)
@@ -316,12 +306,6 @@ public sealed class NetworkProbeService
             healthy = false;
             reason = $"延迟 {avg:F0}ms 超过阈值 {latencyLimitMs:F0}ms";
         }
-        else if (slow)
-        {
-            // 延迟与丢包都不错，但吞吐趴在地上 —— 「连着却什么都干不了」的典型
-            healthy = false;
-            reason = $"速率过低 {downBytesPerSec / 1024:F0}KB/s（阈值 {slowLimitBytesPerSec / 1024:F0}KB/s）";
-        }
         else
         {
             healthy = true;
@@ -338,8 +322,6 @@ public sealed class NetworkProbeService
             Received = received,
             IsHealthy = healthy,
             Reason = reason,
-            DownBytesPerSec = downBytesPerSec,
-            IsSlow = slow,
         };
     }
 

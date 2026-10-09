@@ -11,13 +11,13 @@
 ;   2. 用 Inno Setup 编译本脚本：
 ;        iscc installer\setup.iss
 ;
-;   产物：installer\Output\YanhuLink-v2.3.1-win-x64-setup.exe
+;   产物：installer\Output\YanhuLink-v2.3.2-win-x64-setup.exe
 ;        （文件名带版本号，方便用户一眼分辨新旧安装包）
 ; ============================================================================
 
 #define MyAppName "砚湖连"
 #define MyAppNameEn "YanhuLink"
-#define MyAppVersion "2.3.1"
+#define MyAppVersion "2.3.2"
 #define MyAppPublisher "扬州职业技术大学高邮湖校区"
 #define MyAppURL "https://github.com/LunaShiori/YanhuLink"
 #define MyAppExeName "CampusNetLogin.exe"

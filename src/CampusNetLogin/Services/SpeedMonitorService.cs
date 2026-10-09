@@ -5,16 +5,31 @@ namespace CampusNetLogin.Services;
 /// <summary>
 /// 速率监测编排服务。
 ///
-/// 把两件事合到一起：
-///   · <b>被动采样</b>：每 2 秒读一次网卡计数器 → 得到「你现在实际用了多少带宽」
-///   · <b>主动测速</b>：每 3 分钟、且仅首页可见时，下载 ≤512KB 小样本 → 得到「这条链路能跑多快」
+/// 只做一件事：**被动采样** —— 每隔几秒读一次网卡计数器，算出
+/// 「此刻这台机器实际占用了多少带宽」。零额外流量、不需要任何权限。
 ///
-/// 为什么必须分成两件事：
-///   只做被动采样的话，用户不打游戏、不下载时读数恒为 0，
-///   界面上会一直显示「0 KB/s」，看起来像坏了 —— 但它其实完全正常。
-///   只做主动测速的话，又必须持续占用带宽，违背「不影响正常使用」的前提。
-///   两者结合：被动数字反映「实时占用」，主动数字反映「链路能力」，
-///   界面上分别标注，用户一眼就能区分。
+/// ★ 为什么把「低速判定」整块移除了（v2.3.2 起）：
+///
+///   被动采样反映的是「当前有没有人在用网」，**不是**「这条链路能跑多快」。
+///   用户看网页、打字、视频缓冲的间隙，占用本来就只有几十 KB/s ——
+///   旧实现把这个当成「网络慢」，再配上「连续 4 次」的判定窗口
+///   （采样间隔 2 秒，也就是 8 秒），必然反复误报：
+///
+///       13:23:35 警告 速率持续偏低（52 KB/s，连续 4 次低于 64 KB/s）
+///       13:24:16 信息 速率已恢复（608 KB/s）
+///       13:24:51 警告 速率持续偏低（41 KB/s，连续 4 次低于 64 KB/s）
+///       …
+///
+///   而当初为了补救而加上的「主动测速」，测的其实是
+///   **认证服务器返回小页面的速度**（Dr.COM 那台服务器上最大的页面只有约 3 KB），
+///   既不是校园网出口带宽，也不能用来判断「出口是否被限速」。
+///   两个数都撑不起「速率过低 = 故障」这个判定，所以整块删掉。
+///
+///   判断「认证通了但出口不通」是 <see cref="NetworkProbeService"/> 公网探测目标的职责，
+///   那才是它擅长的（实测延迟 / 丢包，且目标在公网）。
+///
+/// 主动测速能力保留，但改为**只由用户手动触发**（首页与热备页的「测速」链接），
+/// 且文案里会说明它测的是「到认证服务器」的速度，避免被误读成外网带宽。
 /// </summary>
 public sealed class SpeedMonitorService : IDisposable
 {
@@ -25,28 +40,13 @@ public sealed class SpeedMonitorService : IDisposable
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
 
-    /// <summary>速率是否应当计入故障判定（由调用方置位，用于「仅在前台观察时判定」）。</summary>
-    private DateTime _lastActiveUtc = DateTime.MinValue;
-
-    /// <summary>最近一次主动测速的结果。</summary>
-    public ActiveSpeedResult? LastActive { get; private set; }
-
     /// <summary>最近一次被动采样。</summary>
     public SpeedSample? LastPassive => _speed.LastSample;
 
     /// <summary>速率样本更新时触发（后台线程）。</summary>
     public event Action<SpeedSnapshot>? SnapshotChanged;
 
-    /// <summary>连续低速计数（达到阈值后由 FailoverService 纳入判定）。</summary>
-    public int SlowStrikes { get; private set; }
-
-    /// <summary>是否处于「速率异常」状态。</summary>
-    public bool IsSlow { get; private set; }
-
     public bool IsRunning => _loopTask is { IsCompleted: false };
-
-    /// <summary>外部声明「现在有人在看界面」，此时才做主动测速。</summary>
-    public bool ViewerActive { get; set; }
 
     public SpeedMonitorService(ConfigService configService, LogService log)
     {
@@ -55,11 +55,12 @@ public sealed class SpeedMonitorService : IDisposable
         _speed = new SpeedTestService(log);
     }
 
-    /// <summary>供 FailoverService 复用的底层测速能力。</summary>
-    public SpeedTestService Speed => _speed;
-
     /// <summary>
     /// 立即做一次主动测速（供界面「测速」按钮使用，忽略间隔限制）。
+    ///
+    /// 注意：这是**到校园认证服务器**的吞吐，不是外网带宽。
+    /// 认证服务器上没有大文件，数字靠重复请求小页面凑样本得出，
+    /// 因此它只能说明「内网这段链路通不通、响应快不快」。
     /// </summary>
     public async Task<ActiveSpeedResult> MeasureNowAsync(CancellationToken ct = default)
     {
@@ -68,16 +69,13 @@ public sealed class SpeedMonitorService : IDisposable
             .MeasureDownloadAsync(cfg.Portal, ct: ct)
             .ConfigureAwait(false);
 
-        LastActive = result;
-        _lastActiveUtc = DateTime.UtcNow;
-
-        Publish(cfg);
-
         if (result.Ok)
-            _log.Success($"测速完成：下行约 {SpeedTestService.FormatSpeed(result.DownBytesPerSec)}（{result.Message}）");
+            _log.Success($"测速完成：到认证服务器约 {SpeedTestService.FormatSpeed(result.DownBytesPerSec)}" +
+                         $"（{result.Message}）");
         else
             _log.Warn($"测速未成功：{result.Message}");
 
+        Publish(cfg);
         return result;
     }
 
@@ -122,10 +120,9 @@ public sealed class SpeedMonitorService : IDisposable
 
     private async Task LoopAsync(CancellationToken ct)
     {
-        // 启动时先主动测一次，这样首页打开就有数，不用干等 3 分钟
-        await SafeDelay(3, ct).ConfigureAwait(false);
-
-        bool firstActiveDone = false;
+        // 首轮采样只是建立基线（SamplePassive 第一次返回 null），
+        // 因此先稍等片刻，避免刚启动就白跑一轮。
+        await SafeDelay(2, ct).ConfigureAwait(false);
 
         while (!ct.IsCancellationRequested)
         {
@@ -151,20 +148,8 @@ public sealed class SpeedMonitorService : IDisposable
                 var sample = _speed.SamplePassive();
                 if (sample is not null)
                 {
-                    EvaluateSlowState(cfg, sample.DownBytesPerSec);
+                    // ★ 采样结果只用于「展示」，绝不参与任何故障判定。
                     Publish(cfg);
-                }
-
-                // 主动测速：只在「有人在看」且「距上次超过间隔」时才做
-                var activeInterval = Math.Clamp(cfg.SpeedActiveInterval, 30, 3600);
-                bool due = DateTime.UtcNow - _lastActiveUtc >= TimeSpan.FromSeconds(activeInterval);
-                bool shouldRun = ViewerActive && !ct.IsCancellationRequested &&
-                                 (due || !firstActiveDone);
-
-                if (shouldRun)
-                {
-                    firstActiveDone = true;
-                    await MeasureOnceQuietAsync(cfg, ct).ConfigureAwait(false);
                 }
             }
             catch (OperationCanceledException)
@@ -181,66 +166,6 @@ public sealed class SpeedMonitorService : IDisposable
         }
     }
 
-    /// <summary>执行一次主动测速，但不写日志（避免首页每隔几分钟刷一条日志）。</summary>
-    private async Task MeasureOnceQuietAsync(AppConfig cfg, CancellationToken ct)
-    {
-        var result = await _speed
-            .MeasureDownloadAsync(cfg.Portal, ct: ct)
-            .ConfigureAwait(false);
-
-        LastActive = result;
-        _lastActiveUtc = DateTime.UtcNow;
-
-        if (result.Ok)
-            EvaluateSlowState(cfg, result.DownBytesPerSec);
-        else
-            // 测速失败不记「低速」，只记一条轻量日志：多半是服务器不返回大文件，
-            // 属于正常现象，不该让用户以为网络坏了。
-            _log.Info($"主动测速未取到样本（{result.Message}），仅使用被动速率");
-
-        Publish(cfg);
-    }
-
-    /// <summary>
-    /// 判定「速率持续过低」。
-    ///
-    /// 之所以要「连续 N 次」而不是一次就报警：一次测速很容易被
-    /// 恰好同时进行的系统更新、云盘同步干扰，得出一个偏低的数字。
-    /// </summary>
-    private void EvaluateSlowState(AppConfig cfg, double downBytesPerSec)
-    {
-        double limit = cfg.SpeedSlowThresholdKbps > 0
-            ? cfg.SpeedSlowThresholdKbps * 1024.0
-            : 0;
-
-        if (limit <= 0 || downBytesPerSec < 0)
-        {
-            SlowStrikes = 0;
-            IsSlow = false;
-            return;
-        }
-
-        if (downBytesPerSec < limit)
-        {
-            SlowStrikes++;
-            int need = Math.Max(1, cfg.SpeedSlowStrikes);
-            if (SlowStrikes >= need)
-            {
-                if (!IsSlow)
-                    _log.Warn($"校园网速率持续偏低（{SpeedTestService.FormatSpeed(downBytesPerSec)}，" +
-                              $"连续 {SlowStrikes} 次低于 {cfg.SpeedSlowThresholdKbps} KB/s）");
-                IsSlow = true;
-            }
-        }
-        else
-        {
-            if (IsSlow)
-                _log.Info($"校园网速率已恢复（{SpeedTestService.FormatSpeed(downBytesPerSec)}）");
-            SlowStrikes = 0;
-            IsSlow = false;
-        }
-    }
-
     private void Publish(AppConfig cfg)
     {
         try
@@ -248,10 +173,6 @@ public sealed class SpeedMonitorService : IDisposable
             SnapshotChanged?.Invoke(new SpeedSnapshot
             {
                 Sample = _speed.LastSample,
-                Active = LastActive,
-                IsSlow = IsSlow,
-                SlowStrikes = SlowStrikes,
-                SlowThresholdKbps = cfg.SpeedSlowThresholdKbps,
                 Enabled = cfg.SpeedMonitorEnabled,
             });
         }
@@ -281,36 +202,17 @@ public sealed record SpeedSnapshot
     /// <summary>最近一次被动采样（实时吞吐）。</summary>
     public SpeedSample? Sample { get; init; }
 
-    /// <summary>最近一次主动测速（链路能力）。</summary>
-    public ActiveSpeedResult? Active { get; init; }
-
     public bool Enabled { get; init; } = true;
 
-    /// <summary>是否判定为「速率持续过低」。</summary>
-    public bool IsSlow { get; init; }
-
-    public int SlowStrikes { get; init; }
-
-    public int SlowThresholdKbps { get; init; }
-
-    /// <summary>实时下行（当前实际占用），字节/秒。</summary>
+    /// <summary>实时下行（当前实际占用），字节/秒。未采样时为 -1。</summary>
     public double DownBytesPerSec => Sample?.DownBytesPerSec ?? -1;
 
     /// <summary>实时上行，字节/秒。</summary>
     public double UpBytesPerSec => Sample?.UpBytesPerSec ?? -1;
-
-    /// <summary>链路下行能力（主动测速结果），字节/秒。</summary>
-    public double CapacityDownBytesPerSec =>
-        Active is { Ok: true } a ? a.DownBytesPerSec : -1;
 
     /// <summary>实时下行文案。</summary>
     public string DownText => SpeedTestService.FormatSpeed(DownBytesPerSec);
 
     /// <summary>实时上行文案。</summary>
     public string UpText => SpeedTestService.FormatSpeed(UpBytesPerSec);
-
-    /// <summary>链路能力文案。未测过时返回占位符。</summary>
-    public string CapacityText => CapacityDownBytesPerSec >= 0
-        ? SpeedTestService.FormatSpeed(CapacityDownBytesPerSec)
-        : "待测";
 }

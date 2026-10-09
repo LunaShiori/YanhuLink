@@ -83,7 +83,7 @@ public sealed class UpdateService : IDisposable
     public const string RepoName = "YanhuLink";
 
     /// <summary>当前版本（与 csproj 的 &lt;Version&gt; 保持一致）。</summary>
-    public const string CurrentVersion = "2.3.1";
+    public const string CurrentVersion = "2.3.2";
 
     /// <summary>产品名，用于展示。</summary>
     public const string ProductName = "砚湖连 YanhuLink";
@@ -100,22 +100,67 @@ public sealed class UpdateService : IDisposable
         !string.Equals(RepoOwner, "你的用户名", StringComparison.Ordinal) &&
         !string.IsNullOrWhiteSpace(RepoName);
 
-    private readonly HttpClient _http;
+    private readonly HttpClient _api;
+    private readonly HttpClient _download;
+
+    /// <summary>检查更新的单次超时。故意压得比较短，靠重试兜底（见 <see cref="CheckAsync"/>）。</summary>
+    private static readonly TimeSpan CheckTimeout = TimeSpan.FromSeconds(8);
+
+    /// <summary>检查更新的最大尝试次数。</summary>
+    private const int CheckMaxAttempts = 3;
+
+    /// <summary>下载更新的最大尝试次数（每次从已下载的位置续传）。</summary>
+    private const int DownloadMaxAttempts = 3;
+
+    /// <summary>
+    /// 「多久没有收到任何数据」算超时。
+    /// </summary>
+    /// <remarks>
+    /// ★ 关键设计：下载**不能用总时长超时**。
+    ///   旧版整个服务共用一个 <c>Timeout = 12s</c> 的 HttpClient，
+    ///   而 45 MB 的安装包在 12 秒内显然下不完 ——
+    ///   于是超时被触发、异常被 catch 成 false，一键更新几乎必然失败。
+    ///   这里改成「空闲超时」：只要还在持续收到数据就不算超时，
+    ///   真正卡住（45 秒一个字节都没有）才放弃并进入下一次重试。
+    /// </remarks>
+    private static readonly TimeSpan DownloadIdleTimeout = TimeSpan.FromSeconds(45);
 
     public UpdateService()
     {
-        _http = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
-        // GitHub API 要求带 User-Agent，否则返回 403
-        _http.DefaultRequestHeaders.TryAddWithoutValidation(
+        // ① 检查更新：JSON 小接口。用自定义 UA（GitHub API 不带 UA 会返回 403）。
+        _api = new HttpClient { Timeout = CheckTimeout };
+        _api.DefaultRequestHeaders.TryAddWithoutValidation(
             "User-Agent", $"{RepoName}/{CurrentVersion}");
-        _http.DefaultRequestHeaders.TryAddWithoutValidation(
+        _api.DefaultRequestHeaders.TryAddWithoutValidation(
             "Accept", "application/vnd.github+json");
+
+        // ② 下载更新包：无总时长上限，靠「空闲超时 + 重试」控制。
+        var handler = new HttpClientHandler
+        {
+            AllowAutoRedirect = true,   // GitHub Release 会 302 到 objects.githubusercontent.com
+            UseProxy = false,
+        };
+        _download = new HttpClient(handler)
+        {
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        _download.DefaultRequestHeaders.TryAddWithoutValidation(
+            "User-Agent", $"{RepoName}/{CurrentVersion}");
     }
 
     /// <summary>
     /// 检查是否有新版本。
     /// 任何网络异常都会被转换成 <see cref="UpdateInfo.CheckSucceeded"/>=false，
     /// 不会抛出，调用方无需 try/catch。
+    ///
+    /// ★ 为什么带重试（v2.3.2 起）：
+    ///   更新源在 GitHub 上，国内直连属于「能用但会概率性抽风」——
+    ///   偶发的连接重置、DNS 抖动、十几秒无响应都很常见。
+    ///   旧版一次失败就直接报错，用户看到的是「检查更新失败」，
+    ///   但过几秒再点一次往往就成功了。
+    ///   现在改成：单次超时压到 8 秒（快速失败，别让用户干等），
+    ///   失败自动重试最多 3 次、退避 1.2s / 2.5s。
+    ///   只有「可重试」的错误才重试；404 这类明确结果直接返回。
     /// </summary>
     public async Task<UpdateInfo> CheckAsync(CancellationToken ct = default)
     {
@@ -126,15 +171,66 @@ public sealed class UpdateService : IDisposable
                 "改成实际的 GitHub 仓库后即可启用在线检查。");
         }
 
+        string lastError = "未知错误";
+        bool retryable = true;
+
+        for (int attempt = 1; attempt <= CheckMaxAttempts; attempt++)
+        {
+            if (ct.IsCancellationRequested)
+                return UpdateInfo.Failed("已取消检查更新。");
+
+            var (info, error, canRetry) = await CheckOnceAsync(ct).ConfigureAwait(false);
+            if (info is not null) return info;
+
+            lastError = error;
+            retryable = canRetry;
+            if (!canRetry) break;
+
+            // 还有下一次尝试 → 退避等待，把「瞬时抖动」的窗口让过去
+            if (attempt < CheckMaxAttempts)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(attempt * 1.2), ct)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    return UpdateInfo.Failed("已取消检查更新。");
+                }
+            }
+        }
+
+        return UpdateInfo.Failed(retryable
+            ? $"连接更新服务器失败（已自动重试 {CheckMaxAttempts} 次）：{lastError}\n" +
+              "更新源在 GitHub 上，国内访问偶尔会不通。稍后再试一次通常就好了，" +
+              "也可以点「打开发布页」手动下载。"
+            : lastError);
+    }
+
+    /// <summary>
+    /// 单次检查。
+    /// 返回 <c>(成功结果, 错误说明, 是否值得重试)</c>；
+    /// 成功时第一项非空，失败时第一项为 null。
+    /// </summary>
+    private async Task<(UpdateInfo? info, string error, bool retryable)> CheckOnceAsync(
+        CancellationToken ct)
+    {
         try
         {
-            using var resp = await _http.GetAsync(LatestApiUrl, ct).ConfigureAwait(false);
+            using var resp = await _api.GetAsync(LatestApiUrl, ct).ConfigureAwait(false);
 
+            // 404 是明确结论（仓库/Release 不存在），重试没有意义
             if (resp.StatusCode == System.Net.HttpStatusCode.NotFound)
-                return UpdateInfo.Failed("更新源返回 404：仓库或 Release 不存在。");
+                return (null, "更新源返回 404：仓库或 Release 不存在。", false);
+
+            // 403/429 多半是触发了限流，等一会儿再试有意义
+            if (resp.StatusCode is System.Net.HttpStatusCode.Forbidden
+                or System.Net.HttpStatusCode.TooManyRequests)
+                return (null, $"更新源返回 {(int)resp.StatusCode}（可能触发了访问频率限制）。", true);
 
             if (!resp.IsSuccessStatusCode)
-                return UpdateInfo.Failed($"更新源返回 {(int)resp.StatusCode}。");
+                return (null, $"更新源返回 {(int)resp.StatusCode}。", true);
 
             var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             using var doc = JsonDocument.Parse(json);
@@ -143,14 +239,14 @@ public sealed class UpdateService : IDisposable
             var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
             var latest = NormalizeVersion(tag);
             if (string.IsNullOrEmpty(latest))
-                return UpdateInfo.Failed("更新源没有返回有效的版本号。");
+                return (null, "更新源没有返回有效的版本号。", false);
 
             var notes = root.TryGetProperty("body", out var b) ? b.GetString() ?? "" : "";
             var url = root.TryGetProperty("html_url", out var u) ? u.GetString() ?? "" : "";
 
             var (download, kind, pkgName, mandatory) = PickAsset(root);
 
-            return new UpdateInfo
+            var info = new UpdateInfo
             {
                 CheckSucceeded = true,
                 CurrentVersion = CurrentVersion,
@@ -163,22 +259,29 @@ public sealed class UpdateService : IDisposable
                 PackageKind = kind,
                 PackageName = pkgName,
             };
+            return (info, string.Empty, false);
         }
-        catch (OperationCanceledException)
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            return UpdateInfo.Failed("检查更新超时，请稍后重试。");
+            // HttpClient.Timeout 到点（用户没取消）→ 可重试
+            return (null, "连接超时", true);
         }
         catch (HttpRequestException ex)
         {
-            return UpdateInfo.Failed($"无法连接更新服务器：{ex.Message}");
+            return (null, $"网络错误（{ex.Message}）", true);
         }
         catch (JsonException)
         {
-            return UpdateInfo.Failed("更新源返回的数据格式无法识别。");
+            // 多半是被中间设备/代理改写成了错误页，重试一次也许能拿到正常响应
+            return (null, "更新源返回的数据格式无法识别。", true);
+        }
+        catch (OperationCanceledException)
+        {
+            return (null, "已取消检查更新。", false);
         }
         catch (Exception ex)
         {
-            return UpdateInfo.Failed($"检查更新失败：{ex.Message}");
+            return (null, $"检查更新失败：{ex.Message}", false);
         }
     }
 
@@ -324,63 +427,247 @@ public sealed class UpdateService : IDisposable
     /// 返回 true 表示「已成功交给安装程序/过渡脚本」，此时调用方应尽快退出程序。
     /// 真正的覆盖动作发生在退出之后。
     /// </summary>
+    /// <param name="info">检查更新得到的结果。</param>
+    /// <param name="progress">进度回调（可能在任意线程调用）。</param>
+    /// <param name="ct">取消令牌。</param>
     public async Task<bool> DownloadAndInstallAsync(
-        UpdateInfo info, IProgress<double>? progress = null,
+        UpdateInfo info, IProgress<UpdateDownloadProgress>? progress = null,
         CancellationToken ct = default)
     {
         if (info is null || !info.HasUpdate) return false;
         if (string.IsNullOrWhiteSpace(info.DownloadUrl)) return false;
 
+        string tempFile;
         try
         {
             var fileName = Path.GetFileName(new Uri(info.DownloadUrl).AbsolutePath);
             if (string.IsNullOrWhiteSpace(fileName)) fileName = "yanhulink-update.bin";
-
-            var tempFile = Path.Combine(Path.GetTempPath(), fileName);
-
-            // ---------- 1. 下载 ----------
-            using var resp = await _http
-                .GetAsync(info.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, ct)
-                .ConfigureAwait(false);
-            if (!resp.IsSuccessStatusCode) return false;
-
-            var total = resp.Content.Headers.ContentLength ?? -1L;
-            var received = 0L;
-
-            await using (var src = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
-            await using (var dst = new FileStream(tempFile, FileMode.Create,
-                             FileAccess.Write, FileShare.None, 81920, useAsync: true))
-            {
-                var buffer = new byte[81920];
-                int read;
-                while ((read = await src.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
-                {
-                    await dst.WriteAsync(buffer.AsMemory(0, read), ct).ConfigureAwait(false);
-                    received += read;
-                    if (total > 0)
-                        progress?.Report((double)received / total);
-                }
-            }
-
-            if (received == 0) return false;
-
-            // ---------- 2. 交给对应的安装方式 ----------
-            return info.PackageKind switch
-            {
-                UpdatePackageKind.Installer => RunInstaller(tempFile),
-                UpdatePackageKind.Portable => RunPortableReplace(tempFile),
-                _ => false,
-            };
-        }
-        catch (OperationCanceledException)
-        {
-            return false;
+            tempFile = Path.Combine(Path.GetTempPath(), fileName);
         }
         catch
         {
             return false;
         }
+
+        var downloaded = await DownloadFileAsync(info, tempFile, progress, ct)
+            .ConfigureAwait(false);
+        if (!downloaded) return false;
+
+        progress?.Report(new UpdateDownloadProgress
+        {
+            Stage = info.PackageKind == UpdatePackageKind.Installer
+                ? "正在启动安装程序…"
+                : "正在准备替换文件…",
+            ReceivedBytes = new FileInfo(tempFile).Length,
+            TotalBytes = new FileInfo(tempFile).Length,
+        });
+
+        // ---------- 交给对应的安装方式 ----------
+        return info.PackageKind switch
+        {
+            UpdatePackageKind.Installer => RunInstaller(tempFile),
+            UpdatePackageKind.Portable => RunPortableReplace(tempFile),
+            _ => false,
+        };
     }
+
+    /// <summary>
+    /// 把更新包下载到 <paramref name="tempFile"/>。
+    ///
+    /// 三个要点（都是为了「国内网络下别失败」）：
+    ///   1. **空闲超时**而非总时长超时 —— 只要还在收数据就一直下；
+    ///   2. **断点续传** —— 每轮用 Range 从已下载的字节数继续，
+    ///      断了不必从零重来（45 MB 在国内网速下重来一次很痛）；
+    ///   3. **自动重试** —— 最多 3 轮，每轮之前报一次「正在重试」。
+    /// </summary>
+    private async Task<bool> DownloadFileAsync(
+        UpdateInfo info, string tempFile,
+        IProgress<UpdateDownloadProgress>? progress, CancellationToken ct)
+    {
+        string lastError = string.Empty;
+
+        for (int attempt = 1; attempt <= DownloadMaxAttempts; attempt++)
+        {
+            if (ct.IsCancellationRequested) return false;
+
+            long existing = 0;
+            try
+            {
+                if (File.Exists(tempFile)) existing = new FileInfo(tempFile).Length;
+            }
+            catch { existing = 0; }
+
+            try
+            {
+                if (attempt > 1)
+                {
+                    progress?.Report(new UpdateDownloadProgress
+                    {
+                        Stage = $"连接中断，正在续传（第 {attempt} 次尝试）…",
+                        ReceivedBytes = existing,
+                        TotalBytes = -1,
+                    });
+                }
+
+                var ok = await DownloadOnceAsync(info, tempFile, existing, progress, ct)
+                    .ConfigureAwait(false);
+                if (ok) return true;
+
+                lastError = "连接被中断";
+            }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested)
+            {
+                return false;
+            }
+            catch (OperationCanceledException)
+            {
+                lastError = "长时间没有收到数据（网络卡住）";
+            }
+            catch (Exception ex)
+            {
+                lastError = ex.Message;
+            }
+
+            if (attempt < DownloadMaxAttempts)
+            {
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(attempt * 1.5), ct)
+                        .ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) { return false; }
+            }
+        }
+
+        // 重试都用完了：清掉半截文件，避免下次误当成「已下载一部分」而算出错误的 Range
+        try { if (File.Exists(tempFile)) File.Delete(tempFile); } catch { /* ignore */ }
+
+        progress?.Report(new UpdateDownloadProgress
+        {
+            Stage = $"下载失败（已重试 {DownloadMaxAttempts} 次）：{lastError}",
+        });
+        return false;
+    }
+
+    /// <summary>
+    /// 单轮下载。成功返回 true；中断或异常则抛出，由调用方决定是否续传重试。
+    /// </summary>
+    private async Task<bool> DownloadOnceAsync(
+        UpdateInfo info, string tempFile, long existingBytes,
+        IProgress<UpdateDownloadProgress>? progress, CancellationToken ct)
+    {
+        using var req = new HttpRequestMessage(HttpMethod.Get, info.DownloadUrl);
+        if (existingBytes > 0)
+            req.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(existingBytes, null);
+
+        using var resp = await _download
+            .SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            // 416：Range 起点已超过文件长度（多半是本地残留了个更长的旧文件）→ 从头下
+            if (resp.StatusCode == System.Net.HttpStatusCode.RequestedRangeNotSatisfiable)
+            {
+                existingBytes = 0;
+                return await DownloadOnceAsync(info, tempFile, 0, progress, ct)
+                    .ConfigureAwait(false);
+            }
+            return false;
+        }
+
+        bool resumed = resp.StatusCode == System.Net.HttpStatusCode.PartialContent;
+        if (!resumed && existingBytes > 0)
+        {
+            // 服务器不支持 Range，只能从头写，别把新数据和旧数据接在一起
+            existingBytes = 0;
+        }
+
+        long total = (resp.Content.Headers.ContentLength ?? -1) + existingBytes;
+
+        // 空闲看门狗：每隔一会儿检查「最近有没有收到过数据」
+        long lastDataTicks = DateTime.UtcNow.Ticks;
+        using var idleCts = new CancellationTokenSource();
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, idleCts.Token);
+
+        var watchdog = Task.Run(async () =>
+        {
+            while (!linked.IsCancellationRequested)
+            {
+                try { await Task.Delay(1000, linked.Token).ConfigureAwait(false); }
+                catch { return; }
+
+                var idle = DateTime.UtcNow -
+                           new DateTime(Interlocked.Read(ref lastDataTicks), DateTimeKind.Utc);
+                if (idle > DownloadIdleTimeout)
+                {
+                    try { idleCts.Cancel(); } catch { /* ignore */ }
+                    return;
+                }
+            }
+        }, CancellationToken.None);
+
+        long received = existingBytes;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        try
+        {
+            await using var src = await resp.Content.ReadAsStreamAsync(linked.Token)
+                .ConfigureAwait(false);
+            await using var dst = new FileStream(tempFile,
+                existingBytes > 0 ? FileMode.Append : FileMode.Create,
+                FileAccess.Write, FileShare.None, 81920, useAsync: true);
+
+            var buffer = new byte[81920];
+            long lastReportTicks = 0;
+            int read;
+
+            while ((read = await src.ReadAsync(buffer, linked.Token).ConfigureAwait(false)) > 0)
+            {
+                await dst.WriteAsync(buffer.AsMemory(0, read), linked.Token).ConfigureAwait(false);
+                received += read;
+                Interlocked.Exchange(ref lastDataTicks, DateTime.UtcNow.Ticks);
+
+                // 报告节流到 ~4 次/秒，避免高频刷新把 UI 线程压垮
+                var now = sw.ElapsedMilliseconds;
+                if (now - lastReportTicks >= 250)
+                {
+                    lastReportTicks = now;
+                    progress?.Report(new UpdateDownloadProgress
+                    {
+                        Stage = "正在下载更新包…",
+                        ReceivedBytes = received,
+                        TotalBytes = total,
+                        BytesPerSec = sw.Elapsed.TotalSeconds > 0.2
+                            ? (received - existingBytes) / sw.Elapsed.TotalSeconds
+                            : -1,
+                    });
+                }
+            }
+        }
+        finally
+        {
+            try { idleCts.Cancel(); } catch { /* ignore */ }
+            try { await watchdog.ConfigureAwait(false); } catch { /* ignore */ }
+        }
+
+        if (total > 0 && received < total)
+            return false;   // 提前结束 = 被中断，交给外层续传
+
+        if (received <= 0) return false;
+
+        progress?.Report(new UpdateDownloadProgress
+        {
+            Stage = "下载完成，正在校验…",
+            ReceivedBytes = received,
+            TotalBytes = total,
+            BytesPerSec = sw.Elapsed.TotalSeconds > 0.2
+                ? (received - existingBytes) / sw.Elapsed.TotalSeconds
+                : -1,
+        });
+        return true;
+    }
+
 
     /// <summary>安装版：静默调用 Inno Setup 安装包。</summary>
     private static bool RunInstaller(string setupExe)
@@ -487,5 +774,58 @@ public sealed class UpdateService : IDisposable
         }
     }
 
-    public void Dispose() => _http.Dispose();
+    public void Dispose()
+    {
+        _api.Dispose();
+        _download.Dispose();
+    }
+}
+
+/// <summary>
+/// 下载更新的进度。
+///
+/// 之所以不用裸的 <c>double</c> 百分比：只给一个百分数，用户既不知道
+/// 下了多少、也不知道还要多久；总量未知时（服务器没给 Content-Length）
+/// 百分数还会是 -1，界面只能显示个「正在下载…」，等于没有进度。
+/// 这里把「已下载 / 总量 / 速度 / 当前阶段」一起带上，界面才好显示。
+/// </summary>
+public sealed record UpdateDownloadProgress
+{
+    /// <summary>当前阶段的中文描述，如「正在下载更新包…」「连接中断，正在续传…」。</summary>
+    public string Stage { get; init; } = string.Empty;
+
+    /// <summary>已接收字节数。</summary>
+    public long ReceivedBytes { get; init; }
+
+    /// <summary>总字节数；未知为 -1。</summary>
+    public long TotalBytes { get; init; } = -1;
+
+    /// <summary>本次下载的平均速度（字节/秒）；未知为 -1。</summary>
+    public double BytesPerSec { get; init; } = -1;
+
+    /// <summary>完成比例 0~1；总量未知时为 -1（界面应改用不确定进度条）。</summary>
+    public double Percent =>
+        TotalBytes > 0 ? Math.Clamp((double)ReceivedBytes / TotalBytes, 0, 1) : -1;
+
+    /// <summary>是否已经知道总量（决定用确定还是不确定进度条）。</summary>
+    public bool HasTotal => TotalBytes > 0;
+
+    /// <summary>形如「12.3 MB / 45.1 MB · 680 KB/s」的说明文字。</summary>
+    public string DetailText
+    {
+        get
+        {
+            if (ReceivedBytes <= 0 && TotalBytes <= 0) return string.Empty;
+
+            var got = SpeedTestService.FormatBytes(ReceivedBytes);
+            var text = HasTotal
+                ? $"{got} / {SpeedTestService.FormatBytes(TotalBytes)}"
+                : $"已下载 {got}";
+
+            if (BytesPerSec > 0)
+                text += $" · {SpeedTestService.FormatSpeed(BytesPerSec)}";
+
+            return text;
+        }
+    }
 }

@@ -23,7 +23,6 @@ public sealed class FailoverService : IDisposable
     private readonly WlanService _wlan = new();
     private readonly ConfigService _configService;
     private readonly LogService _log;
-    private readonly SpeedTestService _speed = new();
 
     private CancellationTokenSource? _cts;
     private Task? _loopTask;
@@ -327,23 +326,16 @@ public sealed class FailoverService : IDisposable
                 var interval = Math.Clamp(cfg.FailoverProbeInterval, 5, 600);
                 var probeCount = Math.Clamp(cfg.FailoverProbeCount, 1, 6);
 
-                // 速率监测开启时，把「最近实测的下行速率」交给探测服务一起判定。
-                // 只有当配置了阈值、且确实测到过速率时才生效；否则传 -1 / 0，
-                // 探测逻辑会完全跳过速率这一项，行为与以前一致。
-                double measured = _speed.LastSample?.DownBytesPerSec ?? -1;
-                double slowLimit = cfg.SpeedMonitorEnabled && cfg.SpeedSlowThresholdKbps > 0
-                    ? cfg.SpeedSlowThresholdKbps * 1024.0
-                    : 0;
-
+                // 判定只看两个维度：内网目标（认证是否生效）与公网目标（出口是否真的通）。
+                // 曾经这里还把「实测下行速率」传给探测服务一起判定，已移除 ——
+                // 那个速率是网卡计数器的被动采样，空闲时天然很低，会大面积误报。
                 var probe = await _probe.ProbeDualAsync(
                     cfg.FailoverProbeTarget,
                     PublicTargetOf(cfg),
                     probeCount,
                     cfg.FailoverLatencyThresholdMs,
                     cfg.FailoverLossThreshold,
-                    ct,
-                    measured,
-                    slowLimit).ConfigureAwait(false);
+                    ct).ConfigureAwait(false);
 
                 LastPrimaryProbe = probe;
                 ActiveNetwork = _probe.GetActiveNetwork();
@@ -924,7 +916,6 @@ public sealed class FailoverService : IDisposable
     public void Dispose()
     {
         Stop();
-        _speed.Dispose();
         _wlan.Dispose();
     }
 }

@@ -17,9 +17,9 @@
     <AssemblyName>CampusNetLogin</AssemblyName>
     <ApplicationTitle>砚湖连</ApplicationTitle>
     <ApplicationId>CampusNetLogin</ApplicationId>
-    <ApplicationDisplayVersion>2.3.1</ApplicationDisplayVersion>
+    <ApplicationDisplayVersion>2.3.2</ApplicationDisplayVersion>
     <ApplicationVersion>2</ApplicationVersion>
-    <Version>2.3.1</Version>
+    <Version>2.3.2</Version>
     <Product>砚湖连 YanhuLink</Product>
     <Company>Yangzhou Polytechnic University</Company>
     <Copyright>Copyright © 2026</Copyright>

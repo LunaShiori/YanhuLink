@@ -64,6 +64,9 @@
             <!-- 更新结果 -->
             <InfoBar x:Name="UpdateBar" IsOpen="False" IsClosable="True" />
 
+            <!-- 更新进度（仅下载中可见，DataContext 指向 App.ViewModel） -->
+            <views:UpdateProgressPanel />
+
             <!-- 功能说明 -->
             <Border Style="{StaticResource CardStyle}">
                 <StackPanel Spacing="14">

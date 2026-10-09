@@ -544,6 +544,10 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>速率状态推送事件（后台线程 → UI 线程由 View 处理）。</summary>
     public event Action<SpeedSnapshot>? SpeedChanged;
 
+    /// <summary>最近一次手动测速的时间与文案（用于在提示里保留一段时间）。</summary>
+    private DateTime _manualTestUtc = DateTime.MinValue;
+    private string _manualTestCaption = string.Empty;
+
     private string _downSpeedText = "—";
     /// <summary>实时下行速率文案（当前实际占用）。</summary>
     public string DownSpeedText
@@ -560,28 +564,12 @@ public sealed class MainViewModel : INotifyPropertyChanged
         private set => Set(ref _upSpeedText, value);
     }
 
-    private string _capacityText = "待测";
-    /// <summary>链路下行能力文案（主动测速所得）。</summary>
-    public string CapacityText
-    {
-        get => _capacityText;
-        private set => Set(ref _capacityText, value);
-    }
-
     private string _speedCaption = "实时流量";
     /// <summary>速率卡下方的说明文字，会随状态变化。</summary>
     public string SpeedCaption
     {
         get => _speedCaption;
         private set => Set(ref _speedCaption, value);
-    }
-
-    private bool _speedSlow;
-    /// <summary>是否处于「速率持续过低」状态。</summary>
-    public bool SpeedSlow
-    {
-        get => _speedSlow;
-        private set => Set(ref _speedSlow, value);
     }
 
     private bool _speedMonitorEnabled = true;
@@ -596,32 +584,8 @@ public sealed class MainViewModel : INotifyPropertyChanged
     }
 
     public string SpeedMonitorToggleDescription => SpeedMonitorEnabled
-        ? "实时显示上下行速率；每 3 分钟做一次小样本测速（≤512KB），几乎不占带宽"
+        ? "读取网卡计数器实时显示上下行速率，不产生任何网络流量"
         : "已关闭速率监测，首页不再显示速率数字";
-
-    private double _speedActiveInterval = 180;
-    /// <summary>主动测速间隔（秒）。</summary>
-    public double SpeedActiveInterval
-    {
-        get => _speedActiveInterval;
-        set
-        {
-            var v = double.IsNaN(value) ? 180 : Math.Clamp(value, 30, 3600);
-            Set(ref _speedActiveInterval, v);
-        }
-    }
-
-    private double _speedSlowThresholdKbps = 64;
-    /// <summary>速率过低阈值（KB/s），0 表示不纳入故障判定。</summary>
-    public double SpeedSlowThresholdKbps
-    {
-        get => _speedSlowThresholdKbps;
-        set
-        {
-            var v = double.IsNaN(value) ? 64 : Math.Clamp(value, 0, 100000);
-            Set(ref _speedSlowThresholdKbps, v);
-        }
-    }
 
     // ==================================================================
     // 外观与首次运行
@@ -816,19 +780,57 @@ public sealed class MainViewModel : INotifyPropertyChanged
     // 一键更新
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// 更新进度，取值 0..1；**-1 表示总长度未知**（服务器没给 Content-Length），
+    /// 此时进度条应走不确定态（<see cref="UpdateProgressIndeterminate"/>）。
+    /// </summary>
     private double _updateProgress;
     public double UpdateProgress
     {
         get => _updateProgress;
-        private set => Set(ref _updateProgress, value);
+        private set
+        {
+            if (!Set(ref _updateProgress, value)) return;
+            OnPropertyChanged(nameof(UpdateProgressPercent));
+            OnPropertyChanged(nameof(UpdateProgressIndeterminate));
+        }
+    }
+
+    /// <summary>进度条百分比（0..100）。</summary>
+    public double UpdateProgressPercent => _updateProgress < 0 ? 0 : _updateProgress * 100;
+
+    /// <summary>总长度未知 → 进度条走不确定态（转圈）而不是假装 0%。</summary>
+    public bool UpdateProgressIndeterminate => _updateProgress < 0;
+
+    private string _updateStageText = string.Empty;
+    /// <summary>更新阶段文案，如「正在下载更新包…」「连接中断，正在续传（第 2 次尝试）…」。</summary>
+    public string UpdateStageText
+    {
+        get => _updateStageText;
+        private set => Set(ref _updateStageText, value);
+    }
+
+    private string _updateDetailText = string.Empty;
+    /// <summary>更新细节文案，如「12.3 MB / 45.1 MB · 680 KB/s」。</summary>
+    public string UpdateDetailText
+    {
+        get => _updateDetailText;
+        private set => Set(ref _updateDetailText, value);
     }
 
     private bool _isDownloadingUpdate;
     public bool IsDownloadingUpdate
     {
         get => _isDownloadingUpdate;
-        private set => Set(ref _isDownloadingUpdate, value);
+        private set
+        {
+            if (!Set(ref _isDownloadingUpdate, value)) return;
+            OnPropertyChanged(nameof(UpdateProgressVisible));
+        }
     }
+
+    /// <summary>是否显示更新进度条（下载中才显示）。</summary>
+    public bool UpdateProgressVisible => _isDownloadingUpdate;
 
     /// <summary>
     /// 下载并安装更新。
@@ -839,6 +841,9 @@ public sealed class MainViewModel : INotifyPropertyChanged
     ///
     /// 安装版会静默跑 Inno Setup（带 /NORESTART，不会强制重启电脑）；
     /// 绿色版会拉起一个过渡脚本，等本进程退出后解压覆盖并重启。
+    ///
+    /// 进度通过 <see cref="UpdateDownloadProgress"/> 汇报（阶段 / 已收字节 / 总字节 / 速率），
+    /// 不再只是一个 0..1 的裸数字 —— 这样界面才能告诉用户「到哪一步了」。
     /// </summary>
     public async Task<bool> DownloadAndInstallUpdateAsync(UpdateInfo info)
     {
@@ -846,16 +851,24 @@ public sealed class MainViewModel : INotifyPropertyChanged
         if (IsDownloadingUpdate) return false;
 
         IsDownloadingUpdate = true;
-        UpdateProgress = 0;
+        UpdateProgress = -1;               // 先按「总长未知」起步，收到响应头后自动转确定态
+        UpdateStageText = $"正在下载 {info.PackageName}…";
+        UpdateDetailText = string.Empty;
         UpdateStatusText = $"正在下载 {info.PackageName}…";
         _log.Info($"开始下载更新包：{info.PackageName}（{info.LatestVersion}）");
 
         try
         {
-            var progress = new Progress<double>(p =>
+            // Progress<T> 会捕获构造时的 SynchronizationContext —— 这里在 UI 线程构造，
+            // 所以下面的回调天然回到 UI 线程，可以直接改绑定属性。
+            var progress = new Progress<UpdateDownloadProgress>(p =>
             {
-                UpdateProgress = p;
-                UpdateStatusText = $"正在下载… {p * 100:0}%";
+                UpdateStageText = p.Stage;
+                UpdateDetailText = p.DetailText;
+                UpdateProgress = p.HasTotal ? p.Percent : -1;
+                UpdateStatusText = p.HasTotal
+                    ? $"{p.Stage} {p.Percent * 100:0}%"
+                    : p.Stage;
             });
 
             var ok = await _update.DownloadAndInstallAsync(info, progress)
@@ -863,6 +876,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
             if (ok)
             {
+                UpdateStageText = "下载完成，正在安装…";
                 UpdateStatusText = "下载完成，正在安装…";
                 _log.Success(info.PackageKind == UpdatePackageKind.Installer
                     ? "已启动安装程序，程序即将退出以完成更新"
@@ -870,6 +884,7 @@ public sealed class MainViewModel : INotifyPropertyChanged
             }
             else
             {
+                UpdateStageText = "自动更新失败";
                 UpdateStatusText = "自动更新失败，请前往发布页手动下载";
                 _log.Warn("自动更新失败：可能是下载中断或临时文件无法写入");
             }
@@ -928,8 +943,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // 速率监测
         SpeedMonitorEnabled = c.SpeedMonitorEnabled;
-        SpeedActiveInterval = c.SpeedActiveInterval;
-        SpeedSlowThresholdKbps = c.SpeedSlowThresholdKbps;
 
         Backups.Clear();
         foreach (var b in c.FailoverBackups)
@@ -991,8 +1004,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
         // 速率监测
         c.SpeedMonitorEnabled = SpeedMonitorEnabled;
-        c.SpeedActiveInterval = (int)Math.Clamp(SpeedActiveInterval, 30, 3600);
-        c.SpeedSlowThresholdKbps = (int)Math.Clamp(SpeedSlowThresholdKbps, 0, 100000);
 
         if (includePassword)
         {
@@ -1292,29 +1303,33 @@ public sealed class MainViewModel : INotifyPropertyChanged
         {
             DownSpeedText = snap.DownText;
             UpSpeedText = snap.UpText;
-            CapacityText = snap.CapacityText;
-            SpeedSlow = snap.IsSlow;
             SpeedCaption = BuildSpeedCaption(snap);
             SpeedChanged?.Invoke(snap);
         }
         catch { /* ignore */ }
     }
 
-    private static string BuildSpeedCaption(SpeedSnapshot snap)
+    /// <summary>
+    /// 速率卡的说明文字。
+    ///
+    /// 这里**只做描述，不做任何健康判定** —— 实时值偏低通常只是
+    /// 「此刻没有程序在用网」，把这种情况说成「网络慢」是错的。
+    /// </summary>
+    private string BuildSpeedCaption(SpeedSnapshot snap)
     {
         if (!snap.Enabled) return "监测已关闭";
 
-        if (snap.IsSlow)
-            return $"速率持续偏低（低于 {snap.SlowThresholdKbps} KB/s）";
+        // 刚手动测过速：优先展示结果，60 秒后自动回到实时说明
+        if (!string.IsNullOrEmpty(_manualTestCaption) &&
+            DateTime.UtcNow - _manualTestUtc < TimeSpan.FromSeconds(60))
+        {
+            return _manualTestCaption;
+        }
 
         // 实时值为 0 是**正常现象**：说明此刻没有程序在用网。
         // 必须解释清楚，否则用户会以为功能坏了。
-        if (snap.Sample is { } s && s.DownBytesPerSec < 1024)
-        {
-            return snap.CapacityDownBytesPerSec > 0
-                ? $"当前空闲 · 链路可跑 {snap.CapacityText}"
-                : "当前空闲";
-        }
+        if (snap.Sample is { DownBytesPerSec: < 1024 })
+            return "当前空闲";
 
         return "实时流量";
     }
@@ -1322,7 +1337,6 @@ public sealed class MainViewModel : INotifyPropertyChanged
     /// <summary>启动速率监测。</summary>
     public void StartSpeedMonitor()
     {
-        _speedMonitor.ViewerActive = true;
         _speedMonitor.Start();
         if (SpeedMonitorEnabled)
             _log.Info($"速率实时监测已启动（采样间隔 {Config.SpeedSampleInterval} 秒）");
@@ -1330,25 +1344,34 @@ public sealed class MainViewModel : INotifyPropertyChanged
 
     public void StopSpeedMonitor() => _speedMonitor.Stop();
 
-    /// <summary>声明「现在有界面在看速率」，用于触发主动测速。</summary>
-    public void SetSpeedViewerActive(bool active) => _speedMonitor.ViewerActive = active;
-
     /// <summary>配置变更后重启速率监测。</summary>
     public void RestartSpeedMonitorIfNeeded()
     {
         _speedMonitor.Stop();
         _speedMonitor.Dispose();
         _speedMonitor = CreateSpeedMonitor();
-        _speedMonitor.ViewerActive = true;
         _speedMonitor.Start();
         if (SpeedMonitorEnabled) _log.Info("速率监测已按新配置重启");
     }
 
-    /// <summary>立即执行一次主动测速（供界面「测速」按钮使用）。</summary>
+    /// <summary>
+    /// 立即执行一次主动测速（供界面「测速」按钮使用）。
+    ///
+    /// 结果只在提示文字里展示 60 秒，**不会**被当成「链路能力」写进速率卡的数字，
+    /// 因为它测的是「到认证服务器」的吞吐，代表不了外网带宽。
+    /// </summary>
     public async Task<ActiveSpeedResult> MeasureSpeedNowAsync()
     {
         _log.Info("正在测速…");
-        return await _speedMonitor.MeasureNowAsync().ConfigureAwait(false);
+        var result = await _speedMonitor.MeasureNowAsync().ConfigureAwait(false);
+
+        _manualTestUtc = DateTime.UtcNow;
+        _manualTestCaption = result.Ok
+            ? $"实测 {SpeedTestService.FormatSpeed(result.DownBytesPerSec)}（到认证服务器）"
+            : $"本次未取到样本（{result.Message}）";
+        SpeedCaption = _manualTestCaption;
+
+        return result;
     }
 
     /// <summary>手动切换到备用网络。</summary>

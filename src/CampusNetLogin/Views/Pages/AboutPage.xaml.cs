@@ -10,6 +10,10 @@ public sealed partial class AboutPage : Page
     public AboutPage()
     {
         InitializeComponent();
+
+        // 更新进度面板（UpdateProgressPanel）通过绑定读 MainViewModel 的进度属性
+        DataContext = App.ViewModel;
+
         Loaded += OnLoaded;
     }
 
@@ -119,39 +123,26 @@ public sealed partial class AboutPage : Page
     {
         if (_lastInfo is null) return;
 
-        var confirmed = await Dialogs.ConfirmAsync(
-            "开始更新",
-            $"将下载 {_lastInfo.LatestVersion} 版本并自动安装。\n\n" +
-            "安装过程中本程序会自动退出，完成后重新打开即可。\n" +
-            "（不会重启电脑，可以放心继续手头的事。）",
-            "开始更新", "取消");
-
-        if (!confirmed) return;
-
         if (sender is Button b) b.IsEnabled = false;
 
         try
         {
-            var ok = await App.ViewModel.DownloadAndInstallUpdateAsync(_lastInfo);
+            // 进度显示交给 UpdateProgressPanel（它绑定 MainViewModel 的进度属性），
+            // 这里只处理结果。
+            var result = await UpdateFlow.RunAsync(_lastInfo, XamlRoot);
 
-            if (!ok)
-            {
-                UpdateBar.Severity = InfoBarSeverity.Warning;
-                UpdateBar.Title = "自动更新失败";
-                UpdateBar.Message = "可能是网络中断或临时目录不可写。请点「打开发布页」手动下载。";
-                if (sender is Button b2) b2.IsEnabled = true;
-                return;
-            }
+            if (result == UpdateFlowResult.Started) return;   // 进程已退出，下面不会执行
 
-            UpdateBar.Severity = InfoBarSeverity.Success;
-            UpdateBar.Title = "正在安装，程序即将退出";
-            UpdateBar.Message = "更新程序已启动，本窗口会在几秒内自动关闭。";
+            if (sender is Button b2) b2.IsEnabled = true;
+            if (result == UpdateFlowResult.Cancelled) return;
 
-            // 给安装程序一点时间把文件句柄抢过去，再退出本程序
-            await Task.Delay(1500);
-
-            try { App.InstanceGuard?.ReleaseForRestart(); } catch { /* ignore */ }
-            Application.Current.Exit();
+            UpdateBar.Severity = InfoBarSeverity.Warning;
+            UpdateBar.Title = "自动更新失败";
+            UpdateBar.Message =
+                string.IsNullOrWhiteSpace(App.ViewModel.UpdateStageText)
+                    ? "可能是网络中断或临时目录不可写。请点「打开发布页」手动下载。"
+                    : $"{App.ViewModel.UpdateStageText}。可能是网络中断或临时目录不可写，" +
+                      "请点「打开发布页」手动下载。";
         }
         catch (Exception ex)
         {

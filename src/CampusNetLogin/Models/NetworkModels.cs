@@ -115,15 +115,6 @@ public sealed record NetworkProbe
     /// <summary>不健康的原因（用于日志）。</summary>
     public string Reason { get; init; } = string.Empty;
 
-    /// <summary>
-    /// 实测下行速率（字节/秒）。未测速时为 -1。
-    /// 由速率监测模块在探测前后填入，供「速率过低」判定使用。
-    /// </summary>
-    public double DownBytesPerSec { get; init; } = -1;
-
-    /// <summary>速率是否低于阈值（仅在测过速且配置了阈值时有意义）。</summary>
-    public bool IsSlow { get; init; }
-
     // ------------------------------------------------------------------
     // 双目标探测结果
     //

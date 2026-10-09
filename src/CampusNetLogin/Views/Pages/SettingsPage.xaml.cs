@@ -232,6 +232,10 @@ public sealed partial class SettingsPage : Page
     {
         CheckUpdateButton.IsEnabled = false;
         CheckUpdateButton.Content = "检查中…";
+        UpdateStatusText.Text = "正在检查更新…（网络抖动时会自动重试）";
+
+        // 更新流程一旦把进程带走，finally 就不能再碰界面了
+        bool started = false;
 
         try
         {
@@ -240,15 +244,35 @@ public sealed partial class SettingsPage : Page
 
             if (!info.CheckSucceeded)
             {
+                UpdateStatusText.Text = "检查更新失败（已自动重试）";
                 await Dialogs.InfoAsync("检查更新失败",
-                    info.ErrorMessage + "\n\n这不影响程序正常使用。");
+                    info.ErrorMessage + "\n\n这不影响程序正常使用。", XamlRoot);
                 return;
             }
 
             if (!info.HasUpdate)
             {
+                UpdateStatusText.Text = $"已是最新版本（v{info.CurrentVersion}）";
                 await Dialogs.InfoAsync("已是最新版本",
-                    $"当前版本 {info.CurrentVersion}，没有可用的更新。");
+                    $"当前版本 {info.CurrentVersion}，没有可用的更新。", XamlRoot);
+                return;
+            }
+
+            // 有可自动安装的包 → 直接走一键更新（带进度条）
+            if (info.CanAutoInstall)
+            {
+                var result = await UpdateFlow.RunAsync(info, XamlRoot);
+                started = result == UpdateFlowResult.Started;
+                if (started) return;
+
+                if (result == UpdateFlowResult.Failed)
+                {
+                    UpdateStatusText.Text = "自动更新失败，请前往发布页手动下载";
+                    await Dialogs.InfoAsync("自动更新失败",
+                        (_vm.UpdateStageText.Length > 0 ? _vm.UpdateStageText + "\n\n" : string.Empty) +
+                        "可能是网络中断或临时目录不可写。请点「打开发布页」手动下载。",
+                        XamlRoot);
+                }
                 return;
             }
 
@@ -264,8 +288,11 @@ public sealed partial class SettingsPage : Page
         }
         finally
         {
-            CheckUpdateButton.IsEnabled = true;
-            CheckUpdateButton.Content = "检查更新";
+            if (!started)
+            {
+                CheckUpdateButton.IsEnabled = true;
+                CheckUpdateButton.Content = "检查更新";
+            }
         }
     }
 

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UserControl
+    x:Class="CampusNetLogin.Views.UpdateProgressPanel"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d">
+
+    <!--
+        更新进度面板
+
+        一键更新以前只有一个「正在下载…」的干等状态，用户不知道卡在哪一步。
+        这里把 MainViewModel 的 UpdateStageText / UpdateProgressPercent /
+        UpdateProgressIndeterminate / UpdateDetailText 摊开显示：
+        阶段文案 + 进度条 + 「已下载 / 总量 · 速率」。
+
+        总长度未知（服务器没给 Content-Length）时走不确定态转圈，
+        而不是假装 0% —— 那种「永远 0%」才是最让人以为死掉的观感。
+
+        DataContext 由调用页面提供（AboutPage / SettingsPage 都指向 App.ViewModel），
+        UpdateProgressVisible=false 时整块自动折叠。
+    -->
+    <Border Style="{StaticResource CardStyle}"
+            Visibility="{Binding UpdateProgressVisible, Converter={StaticResource BoolToVisibility}}">
+        <StackPanel Spacing="10">
+
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <FontIcon Glyph="&#xE896;" FontSize="14"
+                          Foreground="{ThemeResource BrandPrimaryBrush}"
+                          VerticalAlignment="Center" />
+                <TextBlock Text="{Binding UpdateStageText, Mode=OneWay}"
+                           FontSize="13" FontWeight="SemiBold"
+                           VerticalAlignment="Center" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <ProgressBar Minimum="0" Maximum="100"
+                         Value="{Binding UpdateProgressPercent, Mode=OneWay}"
+                         IsIndeterminate="{Binding UpdateProgressIndeterminate, Mode=OneWay}" />
+
+            <TextBlock Text="{Binding UpdateDetailText, Mode=OneWay}"
+                       Style="{StaticResource CaptionStyle}"
+                       TextWrapping="Wrap" />
+        </StackPanel>
+    </Border>
+</UserControl>
