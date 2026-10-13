@@ -202,6 +202,17 @@ public sealed class NetworkProbeService
             healthy = false;
             reason = $"内网正常但外网不通（出口故障或被限速），{pub.Reason}";
         }
+        else if (!primary.Success && internetOk)
+        {
+            // 内网不通、公网却通 —— 最典型的情形就是「已经切到备用热点」。
+            // 这不是校园网故障，文案必须中性一点，否则界面会把它显示成
+            // 「校园网丢包」，让人以为校园网又坏了（用户正是这么被误导的）。
+            //
+            // 注意：如果内网目标已被钉在主用接口上（见 IpRouteService），
+            // 同样的结果含义就变成「校园网那条链路确实不通」——
+            // 具体该怎么说由 FailoverService / 界面按 IntranetPinned 决定。
+            reason = $"内网目标不可达（{primary.Reason}）";
+        }
 
         return primary with
         {
@@ -322,6 +333,11 @@ public sealed class NetworkProbeService
             Received = received,
             IsHealthy = healthy,
             Reason = reason,
+
+            // 内网目标的「自身」判定 —— 与 IsHealthy 暂时同值，
+            // 双目标探测时外层会用公网结果覆盖 IsHealthy，但这两项保持不变。
+            IntranetHealthy = healthy,
+            IntranetSuccess = success,
         };
     }
 

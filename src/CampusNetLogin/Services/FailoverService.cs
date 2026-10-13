@@ -16,6 +16,11 @@ namespace CampusNetLogin.Services;
 ///   - 待命期：备用接口 metric 设为 9000（远高于主用），因此不参与选路
 ///   - 切换后：备用接口 metric 设为 5，主用设为 9000，流量改走备用
 ///   - 切回时：恢复两者为「自动跃点数」，回到系统默认行为
+///
+/// ★ 切换后还必须补一手「内网目标固定」（IpRouteService）：
+///   改跃点数会连**发往校园内网的包**一起交给备用热点，导致探测不到校园网、
+///   打不开认证页面、校园网恢复了也回不来。所以切换成功后要把认证服务器等
+///   内网目标用 /32 主机路由钉回主用接口。详见 <c>PinIntranetTargetsToPrimary</c>。
 /// </summary>
 public sealed class FailoverService : IDisposable
 {
@@ -70,6 +75,64 @@ public sealed class FailoverService : IDisposable
     private const int RecoveryProbeMinSeconds = 60;
     private const int RecoveryProbeMaxSeconds = 300;
 
+    // ------------------------------------------------------------------
+    // ★ 内网目标固定（v2.3.3 修复的核心）
+    //
+    // 切到备用网络后，备用接口跃点数被设为 5、主用被压到 9000，
+    // 于是**系统默认路由改走备用热点**。默认路由是「兜底路由」，
+    // 它不只影响上网流量 —— 连发往校园内网（172.18.1.6 认证服务器 / 认证页面）
+    // 的包也会被交给手机热点，热点不认识校园内网地址，包直接丢掉。
+    //
+    // 后果有三个，正是用户这次报的问题：
+    //   1. 探测校园网永远失败 → 界面一直显示「校园网丢包 / 超时」；
+    //   2. 打不开校园认证页面 → 连手动认证都做不到；
+    //   3. 校园网恢复了程序也察觉不到（探测包走不到有线那条路），
+    //      于是永远卡在备用网络里回不来 —— 「无法回连」。
+    //
+    // 解法：切换成功后，给这些内网目标各加一条 /32 主机路由钉在主用接口上。
+    // 主机路由前缀最长、优先级与接口跃点数无关，默认路由怎么改都动不了它。
+    // ------------------------------------------------------------------
+
+    /// <summary>已钉到主用接口的内网目标 IP（切回 / 退出 / 切换失败时必须清理）。</summary>
+    private readonly List<string> _pinnedTargets = new();
+
+    /// <summary>当前是否已把内网目标钉到主用接口。</summary>
+    private bool _intranetPinned;
+
+    /// <summary>上次「重新钉一次」的时间（UTC）。</summary>
+    private DateTime _lastPinRefreshUtc = DateTime.MinValue;
+
+    /// <summary>
+    /// 重新钉一次内网目标的间隔（秒）。
+    ///
+    /// 为什么需要周期性重钉：拔插网线、路由器重启、DHCP 续约之后，
+    /// 主用接口的网关可能已经换了，而主机路由里记的是**旧的下一跳** ——
+    /// 那条路由会静默失效，于是又退回「探测不到校园网」。
+    /// 重钉只是改写本机路由表，不产生任何网络流量，代价可以忽略。
+    /// </summary>
+    private const int PinRefreshSeconds = 60;
+
+    // ------------------------------------------------------------------
+    // ★ 防横跳（v2.3.3 新增）
+    //
+    // 「内网通、公网不通」既可能是校园网出口真故障，也可能是**自己刚切回来、
+    // 认证会话还没重建**（Dr.COM 把会话绑在 IP 上，切到热点再切回来
+    // 源 IP 变了，旧会话必然失效）。
+    //
+    // 后者如果立刻判定故障再切走，就会形成
+    // 「切回 → 15 秒后又切走 → 25 秒后又切回」的来回横跳，比老实停在备用网络里更糟。
+    // 所以切回后留一段宽限期，期间的出口不通不触发切换，交给守护进程完成重新认证。
+    // ------------------------------------------------------------------
+
+    /// <summary>上次切回主用网络的时间（UTC）。</summary>
+    private DateTime _lastSwitchBackUtc = DateTime.MinValue;
+
+    /// <summary>切回后的宽限秒数：这段时间内不因「出口不通」再次切走。</summary>
+    private const int SwitchBackGraceSeconds = 90;
+
+    /// <summary>宽限期提示是否已写过日志（避免每 15 秒刷一条）。</summary>
+    private bool _switchBackGraceNoticeLogged;
+
     /// <summary>是否处于「已切到备用」的状态。</summary>
     public bool IsOnBackup => State is FailoverState.OnBackup;
 
@@ -82,6 +145,15 @@ public sealed class FailoverService : IDisposable
 
     /// <summary>致命错误通知（文案需要用户注意）。</summary>
     public event Action<string>? ErrorOccurred;
+
+    /// <summary>
+    /// 已切回主用网络（校园网）。
+    ///
+    /// 切到备用再切回来，本机在认证服务器眼里的源 IP 变了，
+    /// Dr.COM 会把原来的会话判定为失效 —— 所以调用方**必须**借这个事件
+    /// 触发一次重新认证，否则用户会看到「切回来了但上不了网」。
+    /// </summary>
+    public event Action? PrimaryRestored;
 
     public FailoverState State { get; private set; } = FailoverState.Disabled;
 
@@ -136,6 +208,11 @@ public sealed class FailoverService : IDisposable
             return;
         }
 
+        // 进程可能在上一次运行时被强杀（任务管理器结束进程、断电、蓝屏），
+        // 那时钉下的主机路由会**残留在系统路由表里**，长期把内网流量劫持到
+        // 一个可能已经不存在的接口上。启动时先按「目标 + /32 + NETMGMT」清一遍。
+        CleanupResidualPinnedRoutes(cfg);
+
         _cts = new CancellationTokenSource();
         _loopTask = Task.Run(() => LoopAsync(_cts.Token));
 
@@ -146,6 +223,10 @@ public sealed class FailoverService : IDisposable
 
     public void Stop()
     {
+        // 无论因为什么停下来（功能被关掉、配置变更后重启、程序退出），
+        // 都要把自己加进路由表的东西拿走 —— 那不属于用户配置，属于运行期临时状态。
+        UnpinIntranetTargets();
+
         var cts = _cts;
         var task = _loopTask;
         _cts = null;
@@ -295,6 +376,180 @@ public sealed class FailoverService : IDisposable
     }
 
     // ------------------------------------------------------------------
+    // 内网目标固定（主机路由）
+    // ------------------------------------------------------------------
+
+    /// <summary>
+    /// 需要「即使在备用网络上也必须可达」的内网目标：
+    /// 校园网探测目标（认证服务器）与认证门户地址。
+    ///
+    /// 前者是判断校园网恢复的依据，后者是用户手动认证的入口 —— 都绕不开。
+    /// </summary>
+    private static IEnumerable<string> EnumerateIntranetTargets(AppConfig cfg)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var probe = NormalizeHost(cfg.FailoverProbeTarget);
+        if (probe is not null && seen.Add(probe)) yield return probe;
+
+        var portal = NormalizeHost(cfg.Portal);
+        if (portal is not null && seen.Add(portal)) yield return portal;
+    }
+
+    /// <summary>把配置里的「目标」规整成纯主机名 / IP（去掉 scheme、路径、端口）。</summary>
+    private static string? NormalizeHost(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+
+        var text = raw.Trim();
+
+        if (Uri.TryCreate(text, UriKind.Absolute, out var uri) &&
+            !string.IsNullOrEmpty(uri.Host))
+            return uri.Host;
+
+        // 没有 scheme 时 Uri 也能解析，但会把 "172.18.1.6" 当成路径，所以手工剥。
+        int slash = text.IndexOf('/');
+        if (slash > 0) text = text[..slash];
+
+        // 只处理 IPv4 形态的 host:port（IPv6 需要方括号，这里不涉及）
+        int colon = text.IndexOf(':');
+        if (colon > 0 && !text.Contains(']')) text = text[..colon];
+
+        return string.IsNullOrWhiteSpace(text) ? null : text;
+    }
+
+    /// <summary>
+    /// 把内网目标钉到主用接口上。
+    /// 只在「主用是有线」时执行 —— 主用是无线时备用热点与校园网共用同一块网卡，
+    /// 网卡已经关联到热点，主用接口根本不在原链路上，钉路由没有意义，
+    /// 那种情况继续走下面的「探回」逻辑。
+    /// </summary>
+    private void PinIntranetTargetsToPrimary(AppConfig cfg, bool quiet = false)
+    {
+        if (_sharedWlanAdapter || _intranetPinned) return;
+
+        var primaryIndex = _primaryIndexBeforeSwitch >= 0
+            ? _primaryIndexBeforeSwitch
+            : _probe.GetActiveNetwork()?.InterfaceIndex ?? -1;
+
+        if (primaryIndex < 0)
+        {
+            if (!quiet) _log.Warn("无法确定主用接口，备用期间将无法探测校园网，改为定期探回确认");
+            return;
+        }
+
+        if (!IpRouteService.IsInterfaceUsable(primaryIndex))
+        {
+            if (!quiet) _log.Info("主用有线接口当前不可用（网线可能已拔出），不做内网目标固定");
+            return;
+        }
+
+        if (!IpRouteService.HasElevatedPrivilege())
+        {
+            if (!quiet)
+                _log.Warn("当前不是管理员权限，无法把内网目标固定到主用接口；" +
+                          "备用期间将改为定期探回确认校园网是否恢复");
+            return;
+        }
+
+        int added = 0;
+        foreach (var target in EnumerateIntranetTargets(cfg))
+        {
+            var ip = IpRouteService.ResolveIpv4(target);
+            if (ip is null) continue;
+            if (_pinnedTargets.Contains(ip, StringComparer.OrdinalIgnoreCase)) continue;
+
+            if (IpRouteService.AddPinnedRoute(ip, primaryIndex,
+                    RoutePriorityService.PinnedRouteMetric, out var error))
+            {
+                _pinnedTargets.Add(ip);
+                added++;
+            }
+            else if (!quiet)
+            {
+                _log.Warn($"把内网目标 {ip} 固定到主用接口失败：{error}");
+            }
+        }
+
+        _intranetPinned = _pinnedTargets.Count > 0;
+        _lastPinRefreshUtc = DateTime.UtcNow;
+
+        if (added > 0 && !quiet)
+        {
+            var list = string.Join("、", _pinnedTargets);
+            _log.Info($"已把内网目标（{list}）固定从主用接口发出：" +
+                      "备用期间仍能探测校园网，也仍能打开校园认证页面");
+        }
+    }
+
+    /// <summary>
+    /// 周期性重新钉一次内网目标。
+    ///
+    /// 两个用途：
+    ///   ① 已钉住时——主用接口的网关可能因为拔插网线 / DHCP 续约而变化，
+    ///      旧主机路由的下一跳就失效了，重钉可以让它重新指向正确的网关；
+    ///   ② 没钉住时——当初可能因为「网线正插着但接口还没起来」或权限不足没钉上，
+    ///      网线插回去之后应该自动恢复探测能力，而不是干等到下一次切换。
+    /// 整个过程只改本机路由表，不产生任何网络流量。
+    /// </summary>
+    private void RefreshIntranetPins(AppConfig cfg)
+    {
+        if (_sharedWlanAdapter) return;
+        if (DateTime.UtcNow - _lastPinRefreshUtc < TimeSpan.FromSeconds(PinRefreshSeconds)) return;
+
+        _lastPinRefreshUtc = DateTime.UtcNow;
+
+        if (_intranetPinned) UnpinIntranetTargets(quiet: true);
+        PinIntranetTargetsToPrimary(cfg, quiet: true);
+    }
+
+    /// <summary>撤销内网目标固定。幂等，可在任意时机调用。</summary>
+    private void UnpinIntranetTargets(bool quiet = false)
+    {
+        if (_pinnedTargets.Count == 0)
+        {
+            _intranetPinned = false;
+            return;
+        }
+
+        int removed = 0;
+        foreach (var ip in _pinnedTargets)
+        {
+            // 用「任意接口匹配」而不是记住的那一个索引：接口索引在拔插网线、
+            // 切换网卡之后可能已经变了，按目标 + /32 + NETMGMT 匹配更稳。
+            removed += IpRouteService.RemovePinnedRoutesAnyInterface(ip);
+        }
+
+        if (removed > 0 && !quiet)
+            _log.Info($"已取消内网目标的接口固定（清理 {removed} 条主机路由）");
+
+        _pinnedTargets.Clear();
+        _intranetPinned = false;
+    }
+
+    /// <summary>清理上一次异常退出留下的主机路由残留。</summary>
+    private void CleanupResidualPinnedRoutes(AppConfig cfg)
+    {
+        try
+        {
+            int removed = 0;
+            foreach (var target in EnumerateIntranetTargets(cfg))
+            {
+                var ip = IpRouteService.ResolveIpv4(target);
+                if (ip is null) continue;
+                removed += IpRouteService.RemovePinnedRoutesAnyInterface(ip);
+            }
+
+            if (removed > 0)
+                _log.Info($"已清理上次运行残留的 {removed} 条内网主机路由");
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"清理残留主机路由时出错：{ex.Message}");
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 主循环
     // ------------------------------------------------------------------
 
@@ -381,6 +636,32 @@ public sealed class FailoverService : IDisposable
             return;
         }
 
+        // ★ 防横跳（v2.3.3 新增）
+        //
+        // 「内网通、公网不通」有两个来源：校园网出口真故障，或**刚刚才切回来、
+        // 认证会话还没重建**（Dr.COM 把会话绑在 IP 上，切到热点再切回来源 IP 变了，
+        // 旧会话必然失效）。
+        //
+        // 后者若立刻判定故障再切走，就会变成
+        // 「切回 → 15 秒后又切走 → 25 秒后又切回」的来回横跳，
+        // 比老实停在备用网络里糟糕得多。所以切回后留一段宽限期，
+        // 期间这类故障不触发切换，交给后台守护进程完成重新认证。
+        if (probe.IsEgressBlocked &&
+            DateTime.UtcNow - _lastSwitchBackUtc < TimeSpan.FromSeconds(SwitchBackGraceSeconds))
+        {
+            if (!_switchBackGraceNoticeLogged)
+            {
+                _switchBackGraceNoticeLogged = true;
+                var waited = (DateTime.UtcNow - _lastSwitchBackUtc).TotalSeconds;
+                _log.Warn($"校园网刚切回 {waited:F0} 秒，出口暂不通（多半是认证会话未重建），" +
+                          "暂不再次切换备用网络，等待自动重新认证");
+            }
+
+            ConsecutiveFailures = 0;
+            SetState(FailoverState.MonitoringPrimary);
+            return;
+        }
+
         _log.Error($"校园网连续 {ConsecutiveFailures} 次异常（{probe.Reason}），准备切换到备用网络");
 
         // 记录切换前的主用网络信息，便于后续切回
@@ -393,6 +674,10 @@ public sealed class FailoverService : IDisposable
 
         if (ok)
         {
+            // 备用网络已经接管默认路由 —— 立刻把内网目标钉回主用接口，
+            // 否则从这一刻起就再也探测不到校园网、也打不开认证页面了。
+            PinIntranetTargetsToPrimary(cfg);
+
             SetState(FailoverState.OnBackup);
             ConsecutiveHealthy = 0;
             ConsecutiveFailures = 0;
@@ -442,7 +727,15 @@ public sealed class FailoverService : IDisposable
     /// <summary>已切到备用：判断主用是否恢复，需要则切回。</summary>
     private async Task HandleOnBackupAsync(NetworkProbe probe, AppConfig cfg, CancellationToken ct)
     {
-        if (probe.IsHealthy)
+        // 周期性重钉 / 补钉内网目标（拔插网线、DHCP 换网关、当初没钉上等情况的自愈）
+        RefreshIntranetPins(cfg);
+
+        // ★ 已经切到备用网络后，「校园网恢复了吗」只能用**内网目标自身**的判定。
+        //
+        //   不能用 probe.IsHealthy —— 它是「内网 + 公网」合成的结论，而备用期间
+        //   公网走的是手机热点。只要热点自己出口一抖，IsHealthy 就翻成 false，
+        //   哪怕校园网早就恢复正常也永远切不回去。用户报的「无法回连」有一半是它。
+        if (probe.IntranetHealthy)
         {
             ConsecutiveHealthy++;
             var need = Math.Max(1, cfg.FailoverRecoveryThreshold);
@@ -463,47 +756,38 @@ public sealed class FailoverService : IDisposable
 
             _log.Info($"校园网恢复中（{ConsecutiveHealthy}/{need}）：{probe.Reason}");
             SetState(FailoverState.OnBackup);
-            await Task.CompletedTask.ConfigureAwait(false);
             return;
         }
 
-        // 探测不健康。这里要区分两种完全不同的情况：
-        //
-        //  ① 校园网真的坏了 → 应继续留在备用网络
-        //  ② 我们只是「已经不在校园网上了」→ 这是正常的，也不该急着切回
-        //
-        // ★ 公网探测让这个歧义可以被直接解开：
-        //   如果公网目标可达，说明当前链路（备用热点）本身是好的，
-        //   那么「内网不可达」只可能是「我们已经不在校园网上了」，
-        //   而不是「校园网坏了」。
-        //
-        // 旧版没有公网目标，只能每隔 1~5 分钟**强行断一次备用热点、
-        // 切回校园网 SSID 试连**（探回），这个试探动作本身就会让热点卡顿。
-        // 现在只在「公网也不通、且主用是无线」这种真正需要确认的情况下才探回。
+        // 走到这里说明「内网目标不通」。分两种情况：
         ConsecutiveHealthy = 0;
 
-        bool internetOk = probe.InternetReachable;
-
-        // 公网通 → 备用网络工作正常，内网不可达是「已切走」的必然结果，
-        // 无需探回，静待用户/时机切回即可。
-        if (internetOk)
+        // ① 已经把内网目标钉在主用接口上 → 这个结果是真的（探测包确实走的校园网那条链路），
+        //    校园网就是还没恢复。安心留在备用网络等待，**不做任何会打断热点的动作**。
+        if (_intranetPinned)
         {
             SetState(FailoverState.OnBackup);
-            await Task.CompletedTask.ConfigureAwait(false);
             return;
         }
 
-        // 公网也不通：此时可能是备用网络本身有问题，或校园网已恢复但还没切回。
-        // 只有主用为无线（与备用共用网卡）时才需要探回确认 ——
-        // 因为有线场景下插入网线即可自动恢复，不需要主动断网试探。
-        if (_sharedWlanAdapter &&
-            !string.IsNullOrWhiteSpace(_primarySsid) &&
-            DateTime.UtcNow - _lastRecoveryProbeUtc >=
-                TimeSpan.FromSeconds(_recoveryProbeIntervalSeconds))
+        // ② 钉不上（主用是无线 / 没权限 / 网线拔了）→ 这个结果没有参考价值，
+        //    必须主动「探回」确认，否则就会像旧版那样永远回不去。
+        //
+        //    主用是无线时探回的代价明显（要断开热点、重连校园网 SSID），
+        //    所以先用公网可达性筛掉「只是已经切走」的情况；
+        //    主用是有线时探回只是临时改个跃点数，几乎无成本，不必筛。
+        if (_sharedWlanAdapter && probe.InternetReachable)
+        {
+            SetState(FailoverState.OnBackup);
+            return;
+        }
+
+        if (DateTime.UtcNow - _lastRecoveryProbeUtc >=
+            TimeSpan.FromSeconds(_recoveryProbeIntervalSeconds))
         {
             _lastRecoveryProbeUtc = DateTime.UtcNow;
 
-            if (await TryRecoverWirelessPrimaryAsync(cfg, ct).ConfigureAwait(false))
+            if (await TryRecoverPrimaryAsync(cfg, ct).ConfigureAwait(false))
                 return;
 
             // 退避：校园网长时间不通时，别每隔一分钟就打断一次备用网络
@@ -512,7 +796,85 @@ public sealed class FailoverService : IDisposable
         }
 
         SetState(FailoverState.OnBackup);
-        await Task.CompletedTask.ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 「探回」：主动确认校园网是否已经恢复。按主用网络类型分派两条路径。
+    /// </summary>
+    private Task<bool> TryRecoverPrimaryAsync(AppConfig cfg, CancellationToken ct)
+        => _sharedWlanAdapter
+            ? TryRecoverWirelessPrimaryAsync(cfg, ct)
+            : TryRecoverWiredPrimaryAsync(cfg, ct);
+
+    /// <summary>
+    /// 「探回」——主用是有线时的兜底方案。
+    ///
+    /// 正常路径是「把内网目标钉在主用接口上，备用期间照常探测」，那条路不需要试探。
+    /// 只有钉不上（没有管理员权限 / 主用接口没有网关）时才会走到这里：
+    /// 临时把主用接口跃点数降到最低，让探测包能走回有线，探完立刻压回去。
+    ///
+    /// 代价：探回的 1~3 秒里默认路由短暂指向有线，若校园网仍不通会掉一下网。
+    /// 所以只在「钉路由不可用」时启用，并沿用指数退避（初始 60 秒，最长 5 分钟）。
+    /// </summary>
+    private async Task<bool> TryRecoverWiredPrimaryAsync(AppConfig cfg, CancellationToken ct)
+    {
+        var primaryIndex = _primaryIndexBeforeSwitch;
+        if (primaryIndex < 0) return false;
+
+        if (!IpRouteService.IsInterfaceUsable(primaryIndex))
+        {
+            _log.Info("主用有线接口当前不可用（网线可能已拔出），继续使用备用网络");
+            return false;
+        }
+
+        _log.Info("正在临时把默认出口切回有线，试探校园网是否恢复…");
+
+        // 必须低于备用接口的 5，否则探测包还是会被送到热点上
+        if (!RoutePriorityService.SetInterfaceMetric(primaryIndex,
+                RoutePriorityService.RecoveryProbeMetric))
+        {
+            _log.Warn("无法临时调整主用接口跃点数，跳过本次试探");
+            return false;
+        }
+
+        NetworkProbe probe;
+        try
+        {
+            // 给系统一点时间收敛路由，然后只探 2 个包，尽量缩短干扰窗口
+            try { await Task.Delay(400, ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) { return false; }
+
+            probe = await _probe.ProbeDualAsync(
+                cfg.FailoverProbeTarget,
+                PublicTargetOf(cfg),
+                Math.Min(2, Math.Clamp(cfg.FailoverProbeCount, 1, 6)),
+                cfg.FailoverLatencyThresholdMs,
+                cfg.FailoverLossThreshold,
+                ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            // 无论探测结果如何都要把主用压回去，否则备用网络就白切了
+            RoutePriorityService.SetInterfaceMetric(primaryIndex,
+                RoutePriorityService.PrimarySuppressedMetric);
+        }
+
+        LastPrimaryProbe = probe;
+        ActiveNetwork = _probe.GetActiveNetwork();
+
+        if (probe.IntranetHealthy)
+        {
+            _log.Success($"校园网已恢复（{probe.Reason}），自动切回");
+            SwitchBackToPrimary(cfg);
+            SetState(FailoverState.MonitoringPrimary);
+            ConsecutiveHealthy = 0;
+            ConsecutiveFailures = 0;
+            PublishSnapshot(cfg);
+            return true;
+        }
+
+        _log.Info($"校园网仍未恢复（{probe.Reason}），继续使用备用网络");
+        return false;
     }
 
     /// <summary>
@@ -544,7 +906,10 @@ public sealed class FailoverService : IDisposable
         LastPrimaryProbe = probe;
         ActiveNetwork = _probe.GetActiveNetwork();
 
-        if (probe.IsHealthy)
+        // 已经重新关联回校园网 SSID 了，此时默认路由也在校园网上，
+        // 所以这里用 IntranetHealthy 判定「校园网本身是否可用」；
+        // 若仍未认证，切回后由 PrimaryRestored 触发一次重新认证。
+        if (probe.IntranetHealthy)
         {
             _log.Success($"校园网「{_primarySsid}」已恢复（{probe.Reason}），自动切回");
             SwitchBackToPrimary(cfg);
@@ -739,13 +1104,18 @@ public sealed class FailoverService : IDisposable
     }
 
     /// <summary>
-    /// 切回主用网络：恢复跃点数为系统自动值。
+    /// 切回主用网络：撤销内网目标固定、恢复跃点数为系统自动值。
     /// 若主用是无线，还会重新关联回校园网 SSID —— 否则网卡仍挂在备用热点上，
     /// 「切回」就只是改了个数字，用户实际上还在用备用网络。
     /// </summary>
     /// <param name="cfg">保留参数，便于后续按配置调整行为。</param>
     public void SwitchBackToPrimary(AppConfig? cfg = null)
     {
+        // 先把「内网目标钉在主用接口」的临时路由撤掉：
+        // 恢复自动跃点数之后默认路由本来就回主用了，钉路由不再需要，
+        // 留着反而会干扰用户后来自己改网络配置。
+        UnpinIntranetTargets();
+
         RestorePrimaryPriority();
 
         if (_sharedWlanAdapter &&
@@ -757,7 +1127,16 @@ public sealed class FailoverService : IDisposable
                 _log.Warn($"重新连接校园网「{_primarySsid}」失败，可能需要手动连接一次");
         }
 
+        // 记录切回时间，用于抑制「切走—切回—再切走」的横跳
+        _lastSwitchBackUtc = DateTime.UtcNow;
+        _switchBackGraceNoticeLogged = false;
+
         ResetSwitchTracking();
+
+        // 通知调用方：链路已经回到校园网，可以（也应该）重新认证了。
+        // 切到备用再切回来，本机在认证服务器眼里的源 IP 变了，
+        // Dr.COM 会把原会话判为失效 —— 不重新认证的话用户会「切回来了但上不了网」。
+        try { PrimaryRestored?.Invoke(); } catch { /* ignore */ }
     }
 
     /// <summary>
@@ -806,6 +1185,8 @@ public sealed class FailoverService : IDisposable
         CapturePrimaryBeforeSwitch();
 
         var ok = await TrySwitchToAnyBackupAsync(cfg, CancellationToken.None).ConfigureAwait(false);
+
+        if (ok) PinIntranetTargetsToPrimary(cfg);
 
         SetState(ok ? FailoverState.OnBackup : FailoverState.Error);
         ConsecutiveHealthy = 0;
@@ -896,6 +1277,7 @@ public sealed class FailoverService : IDisposable
                 PrimarySsid = _primarySsid,
                 SharedWlanAdapter = _sharedWlanAdapter,
                 RecoveryProbeSeconds = _recoveryProbeIntervalSeconds,
+                IntranetPinned = _intranetPinned,
                 InternetReachable = LastPrimaryProbe?.InternetReachable ?? true,
                 IsEgressBlocked = LastPrimaryProbe?.IsEgressBlocked ?? false,
                 PublicTarget = PublicTargetOf(cfg) ?? string.Empty,
@@ -970,6 +1352,16 @@ public sealed record FailoverSnapshot
 
     /// <summary>当前「探回」主用网络的间隔（秒），用于向用户解释换网节奏。</summary>
     public int RecoveryProbeSeconds { get; init; } = 60;
+
+    /// <summary>
+    /// 备用期间，内网目标（认证服务器 / 认证页面）是否已固定从主用接口发出。
+    ///
+    /// 为 true 表示「现在探测到的校园网状态是可信的」——探测包确实走了校园网那条链路；
+    /// 为 false 表示探测目标也被备用网络的默认路由接管了，
+    /// 此时「内网不通」只是「已经切走」的必然结果，**不代表校园网故障**，
+    /// 界面文案必须据此区别对待，否则会误导用户以为校园网又坏了。
+    /// </summary>
+    public bool IntranetPinned { get; init; }
 
     /// <summary>状态的中文描述。</summary>
     public string StateText => State switch

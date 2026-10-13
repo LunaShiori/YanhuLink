@@ -207,7 +207,9 @@ public sealed partial class DashboardPage : Page
                             ("网络热备运行中", "正在持续监测校园网质量，一切正常", "\uE7F4"),
                         FailoverState.OnBackup =>
                             ($"正在使用备用网络「{snap.BackupSsid}」",
-                             snap.TakeoverActive ? "校园网恢复后会自动切回" : "未取得管理员权限，可能未真正接管出口",
+                             snap.IntranetPinned
+                                 ? "校园网仍在持续探测中，恢复后自动切回并重新认证"
+                                 : snap.TakeoverActive ? "校园网恢复后会自动切回" : "未取得管理员权限，可能未真正接管出口",
                              "\uE7BA"),
                         FailoverState.SwitchingToBackup =>
                             ("正在切换到备用网络", "识别到校园网异常，正在应急切换…", "\uE895"),

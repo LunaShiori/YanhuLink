@@ -1146,8 +1146,51 @@ public sealed class MainViewModel : INotifyPropertyChanged
     {
         var fo = new FailoverService(_configService, _log);
         fo.SnapshotChanged += OnFailoverSnapshot;
+        fo.PrimaryRestored += OnPrimaryRestored;
         fo.ErrorOccurred += msg => NotifyRequested?.Invoke("网络热备", msg);
         return fo;
+    }
+
+    /// <summary>
+    /// 热备切回校园网之后的补救动作：立刻重新认证一次。
+    ///
+    /// 为什么必须做（v2.3.3 新增）：
+    ///   Dr.COM 把认证会话绑在**客户端 IP** 上。切到备用热点再切回有线，
+    ///   本机在认证服务器眼里的源 IP 已经变了，原会话必然失效。
+    ///   不补一次登录，用户看到的就是「网络切回来了，网页还是打不开」；
+    ///   更糟的是 15 秒后又被判定为「出口不通」再切走，
+    ///   变成「切回 → 切走 → 切回」的来回横跳，比停在备用网络里还差。
+    /// </summary>
+    private void OnPrimaryRestored()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                // 等接口跃点数与路由表收敛，否则这次认证可能仍从备用链路发出
+                await Task.Delay(1500).ConfigureAwait(false);
+
+                var user = Username.Trim();
+                if (string.IsNullOrEmpty(user) || string.IsNullOrEmpty(Password)) return;
+
+                _log.Info("已切回校园网，正在重新认证…");
+                var res = await _client.LoginAsync(user, Password, Suffix).ConfigureAwait(false);
+
+                if (res.Ok)
+                {
+                    _log.Success($"切回后重新认证成功，账号：{res.Account}");
+                    SetState(ConnectionState.Online, "已登录", res.Account);
+                }
+                else
+                {
+                    _log.Warn($"切回后重新认证失败：{res.Message}（守护进程稍后会自动重试）");
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Warn($"切回后重新认证异常：{ex.Message}");
+            }
+        });
     }
 
     /// <summary>把后台线程的状态快照转成可绑定属性。</summary>
@@ -1232,11 +1275,18 @@ public sealed class MainViewModel : INotifyPropertyChanged
             FailoverState.MonitoringPrimary
                 => $"校园网异常 {snap.ConsecutiveFailures}/{snap.FailureNeeded}：{snap.Probe?.Reason}",
             FailoverState.SwitchingToBackup => "正在连接备用网络并调整路由…",
+            FailoverState.OnBackup when snap.Probe is { IntranetHealthy: true }
+                => $"校园网恢复中 {snap.ConsecutiveHealthy}/{snap.RecoveryNeeded}，恢复后自动切回",
             FailoverState.OnBackup when !snap.InternetReachable
                 => $"备用网络「{snap.BackupSsid}」已连接，但其出口也不通，请检查热点数据网络",
-            FailoverState.OnBackup when snap.Probe is { IsHealthy: true }
-                => $"校园网恢复中 {snap.ConsecutiveHealthy}/{snap.RecoveryNeeded}，恢复后自动切回",
-            FailoverState.OnBackup => $"当前使用备用网络「{snap.BackupSsid}」",
+            // ★ 备用期间能探测到校园网的前提是「内网目标已固定走主用接口」。
+            //   钉住时「检测失败」才是真的校园网没恢复；没钉住（主用是无线 /
+            //   没管理员权限）时探测目标也被备用网络接管了，那个「失败」
+            //   只说明「已经切走」，不能算作校园网故障 —— 文案必须分开说。
+            FailoverState.OnBackup when snap.IntranetPinned
+                => $"当前使用备用网络「{snap.BackupSsid}」，校园网仍未恢复（正持续探测主用链路）",
+            FailoverState.OnBackup
+                => $"当前使用备用网络「{snap.BackupSsid}」，会定期切回试探校园网是否恢复",
             FailoverState.SwitchingBack => "正在切回校园网…",
             FailoverState.Error => "备用网络连接失败，请检查密码或信号",
             _ => string.Empty,

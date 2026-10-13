@@ -28,6 +28,21 @@ public static class RoutePriorityService
     /// <summary>主用网络被压制时的跃点数。</summary>
     public const int PrimarySuppressedMetric = 9000;
 
+    /// <summary>
+    /// 「钉」内网目标用的主机路由跃点数。
+    ///
+    /// 主机路由（/32）与默认路由（/0）前缀长度不同，本来就不在同一个比较组里，
+    /// 跃点数只是同前缀长度之间的排序依据。这里给 1 纯粹是图个「绝对优先」的语义。
+    /// </summary>
+    public const int PinnedRouteMetric = 1;
+
+    /// <summary>
+    /// 「探回」时临时把主用接口压到的跃点数。
+    ///
+    /// 必须**低于** <see cref="BackupActiveMetric"/>（5），否则探测包还是会走备用网络。
+    /// </summary>
+    public const int RecoveryProbeMetric = 1;
+
     // ------------------------------------------------------------------
     // 读取
     // ------------------------------------------------------------------

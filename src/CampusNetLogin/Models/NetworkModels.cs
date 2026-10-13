@@ -141,6 +141,26 @@ public sealed record NetworkProbe
     /// </summary>
     public bool IsEgressBlocked { get; init; }
 
+    // ------------------------------------------------------------------
+    // 内网目标的「自身」判定（★ 与上面的合成结果刻意分开）
+    //
+    // IsHealthy / Reason 是「内网 + 公网」合成后的结论：
+    //   内网通 + 公网不通 → IsHealthy=false（出口故障，监测期要切走，这是对的）。
+    //
+    // 但**已经切到备用网络**之后，公网走的是手机热点，
+    // 再用合成结论去问「校园网恢复了没有」就完全错了 ——
+    // 备用热点自己出口一断，IsHealthy 就永远是 false，
+    // 哪怕校园网早就好了也切不回去。
+    //
+    // 所以这两项只描述「内网目标这条链路本身」，供备用阶段的恢复判定使用。
+    // ------------------------------------------------------------------
+
+    /// <summary>内网目标自身的健康判定（延迟与丢包达标，不含公网结果）。</summary>
+    public bool IntranetHealthy { get; init; }
+
+    /// <summary>内网目标是否至少收到过一个回包。</summary>
+    public bool IntranetSuccess { get; init; }
+
     public static NetworkProbe Failed(string target, string reason) => new()
     {
         Target = target,

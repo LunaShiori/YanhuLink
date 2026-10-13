@@ -276,11 +276,15 @@
                                             VerticalAlignment="Center">
                                     <FontIcon Glyph="&#xE7BA;" FontSize="14"
                                               Foreground="{StaticResource FailoverWarnBrush}" />
-                                    <TextBlock FontSize="12.5" VerticalAlignment="Center"
-                                               Foreground="{ThemeResource TextFillColorPrimaryBrush}">
-                                        <Run Text="当前正在使用备用网络：" />
-                                        <Run Text="{Binding ActiveBackupSsid}" FontWeight="SemiBold" />
-                                    </TextBlock>
+                                    <StackPanel Spacing="3" VerticalAlignment="Center">
+                                        <TextBlock FontSize="12.5"
+                                                   Foreground="{ThemeResource TextFillColorPrimaryBrush}">
+                                            <Run Text="当前正在使用备用网络：" />
+                                            <Run Text="{Binding ActiveBackupSsid}" FontWeight="SemiBold" />
+                                        </TextBlock>
+                                        <TextBlock x:Name="OnBackupDetailText" FontSize="11.5"
+                                                   Opacity="0.75" TextWrapping="Wrap" />
+                                    </StackPanel>
                                 </StackPanel>
 
                                 <Button Grid.Column="1" Content="切回校园网"

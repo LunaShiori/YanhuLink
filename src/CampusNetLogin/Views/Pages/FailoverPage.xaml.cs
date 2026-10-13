@@ -73,9 +73,6 @@ public sealed partial class FailoverPage : Page
         FailoverBadge.Opacity = 0.16;
         FailoverBadgeText.Text = snap.StateText;
 
-        OnBackupBanner.Visibility = snap.State == FailoverState.OnBackup
-            ? Visibility.Visible : Visibility.Collapsed;
-
         CurrentNetIcon.Glyph = snap.Network?.IsWireless == true ? "\uE701" : "\uE839";
 
         // 无线不可用提示
@@ -104,6 +101,20 @@ public sealed partial class FailoverPage : Page
                     ? "切到备用后，程序会每隔 1 分钟切回校园网试探一次，一旦校园网恢复就立刻切回。（开启「同时探测公网出口」可免去这种断网试探）"
                     : "切到备用后，只要公网出口仍然可达即视为备用网络工作正常，不会再断网试探；" +
                       "只有出口本身也不通时，程序才会周期性切回校园网确认是否已恢复。");
+        }
+
+        // 已切备用横幅的说明文字：必须讲清「现在能不能打开校园认证页面」
+        // 和「程序靠什么判断校园网是否恢复」，否则界面上的探测结果会让人误会成
+        // 「校园网又坏了」（用户报的正是这个误解）。
+        bool onBackup = snap.State == FailoverState.OnBackup;
+        OnBackupBanner.Visibility = onBackup ? Visibility.Visible : Visibility.Collapsed;
+        if (onBackup)
+        {
+            OnBackupDetailText.Text = sharedWlan
+                ? "备用热点与校园网共用同一块无线网卡，程序会定期切回试连；校园网恢复后自动切回。"
+                : snap.IntranetPinned
+                    ? "校园认证服务器已固定走主用网线：现在仍能打开校园网认证页面，校园网一恢复就会自动切回并重新认证。"
+                    : "程序会定期探回确认校园网是否恢复，恢复后自动切回并重新认证。";
         }
 
         // 出口状态着色：出口不通时用告警色，正常时为常规色
